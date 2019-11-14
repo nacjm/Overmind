@@ -1,9 +1,9 @@
+import {log} from '../../console/log';
 import {profile} from '../../profiler/decorator';
 import {Directive} from '../Directive';
-import {log} from '../../console/log';
 import {NotifierPriority} from '../Notifier';
 
-export const TerminalState_Emergency: TerminalState = {
+export const TERMINAL_STATE_EMERGENCY: TerminalState = {
 	name     : 'emergency',
 	type     : 'in',
 	amounts  : {
@@ -21,6 +21,10 @@ export const TerminalState_Emergency: TerminalState = {
 
 const EMERGENCY_STATE_TIMEOUT = 10000;
 
+
+/**
+ * Put the colony's terminal in an emergency state, which maintains supplies of T3 boots during defensive operations
+ */
 @profile
 export class DirectiveTerminalEmergencyState extends Directive {
 
@@ -42,7 +46,7 @@ export class DirectiveTerminalEmergencyState extends Directive {
 		// Register abandon status
 		this.terminal = this.pos.lookForStructure(STRUCTURE_TERMINAL) as StructureTerminal;
 		if (this.terminal) {
-			Overmind.terminalNetwork.registerTerminalState(this.terminal, TerminalState_Emergency);
+			Overmind.terminalNetwork.registerTerminalState(this.terminal, TERMINAL_STATE_EMERGENCY);
 		}
 		if (Game.time % 25 == 0) {
 			log.alert(`${this.pos.print}: emergency terminal state active!`, NotifierPriority.High);
@@ -59,7 +63,7 @@ export class DirectiveTerminalEmergencyState extends Directive {
 
 	run() {
 		// Incubation directive gets removed once the colony has a command center (storage)
-		if (!this.colony || !this.terminal || Game.time > (this.memory.created || 0) + EMERGENCY_STATE_TIMEOUT) {
+		if (!this.colony || !this.terminal || Game.time > (this.memory[_MEM.TICK] || 0) + EMERGENCY_STATE_TIMEOUT) {
 			this.remove();
 		}
 	}

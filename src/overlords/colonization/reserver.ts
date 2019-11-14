@@ -1,11 +1,16 @@
-import {Overlord} from '../Overlord';
-import {Zerg} from '../../zerg/Zerg';
+import {Roles, Setups} from '../../creepSetups/setups';
 import {DirectiveOutpost} from '../../directives/colony/outpost';
-import {Tasks} from '../../tasks/Tasks';
+import {RoomIntel} from '../../intel/RoomIntel';
 import {OverlordPriority} from '../../priorities/priorities_overlords';
 import {profile} from '../../profiler/decorator';
-import {Roles, Setups} from '../../creepSetups/setups';
+import {Tasks} from '../../tasks/Tasks';
+import {Zerg} from '../../zerg/Zerg';
+import {MY_USERNAME} from '../../~settings';
+import {Overlord} from '../Overlord';
 
+/**
+ * Spawns reservers to reserve an outpost room
+ */
 @profile
 export class ReservingOverlord extends Overlord {
 
@@ -16,16 +21,21 @@ export class ReservingOverlord extends Overlord {
 		super(directive, 'reserve', priority);
 		// Change priority to operate per-outpost
 		this.priority += this.outpostIndex * OverlordPriority.remoteRoom.roomIncrement;
-		this.reserveBuffer = 3000;
+		this.reserveBuffer = 2000;
 		this.reservers = this.zerg(Roles.claim);
 	}
 
 	init() {
-		if (!this.room || this.room.controller!.needsReserving(this.reserveBuffer)) {
-			this.wishlist(1, Setups.infestors.reserve);
-		} else {
-			this.wishlist(0, Setups.infestors.reserve);
+		let amount = 0;
+		if (this.room) {
+			if (this.room.controller!.needsReserving(this.reserveBuffer)) {
+				amount = 1;
+			}
+		} else if (RoomIntel.roomReservedBy(this.pos.roomName) == MY_USERNAME &&
+				   RoomIntel.roomReservationRemaining(this.pos.roomName) < 1000) {
+			amount = 1;
 		}
+		this.wishlist(amount, Setups.infestors.reserve);
 	}
 
 	private handleReserver(reserver: Zerg): void {

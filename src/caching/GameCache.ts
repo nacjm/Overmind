@@ -1,9 +1,10 @@
-// Preprocessing code to be run before animation of anything
-
-import {profile} from '../profiler/decorator';
 import {DirectiveOutpost} from '../directives/colony/outpost';
 import {DirectiveSKOutpost} from '../directives/colony/outpostSK';
+import {profile} from '../profiler/decorator';
 
+/**
+ * GameCache does initial low-level preprocessing before each tick is run
+ */
 @profile
 export class GameCache implements ICache {
 
@@ -21,25 +22,29 @@ export class GameCache implements ICache {
 	}
 
 	private cacheCreepsByColony() {
-		this.creepsByColony = _.groupBy(Game.creeps, creep => creep.memory.colony) as { [colName: string]: Creep[] };
+		this.creepsByColony = _.groupBy(Game.creeps, creep => creep.memory[_MEM.COLONY]) as { [colName: string]: Creep[] };
 	}
 
-	/* Generates a hash table for creeps assigned to each object: key: OLref, val: (key: role, val: names[]) */
+	/**
+	 * Generates a hash table for creeps assigned to each object: key: OLref, val: (key: role, val: names[])
+	 */
 	private cacheOverlords() {
 		this.overlords = {};
 		// keys: overlordRef, value: creepNames[]
-		let creepNamesByOverlord = _.groupBy(_.keys(Game.creeps), name => Game.creeps[name].memory.overlord);
-		for (let ref in creepNamesByOverlord) {
+		const creepNamesByOverlord = _.groupBy(_.keys(Game.creeps), name => Game.creeps[name].memory[_MEM.OVERLORD]);
+		for (const ref in creepNamesByOverlord) {
 			// keys: roleName, value: creepNames[]
 			this.overlords[ref] = _.groupBy(creepNamesByOverlord[ref], name => Game.creeps[name].memory.role);
 		}
 	}
 
-	/* Generates a hash table for targets: key: TargetRef, val: targeting creep names*/
+	/**
+	 * Generates a hash table for targets: key: TargetRef, val: targeting creep names
+	 */
 	private cacheTargets() {
 		this.targets = {};
-		for (let i in Game.creeps) {
-			let creep = Game.creeps[i];
+		for (const i in Game.creeps) {
+			const creep = Game.creeps[i];
 			let task = creep.memory.task;
 			while (task) {
 				if (!this.targets[task._target.ref]) this.targets[task._target.ref] = [];

@@ -2,28 +2,29 @@
  * Creep tasks setup instructions
  *
  * Javascript:
- * 1. In main.js:    require("tasks/prototypes.js");
+ * 1. In main.js:   require("tasks/prototypes.js");
  * 2. As needed:    var Tasks = require("<path to Tasks.js>");
  *
  * Typescript:
- * 1. In main.ts:    import "./tasks/prototypes";
+ * 1. In main.ts:   import "./tasks/prototypes";
  * 2. As needed:    import {Tasks} from "<path to Tasks.ts>"
  *
  * If you use Travler, change all occurrences of creep.moveTo() to creep.goTo()
  */
 
-import {initializeTask} from './initializer';
+import {log} from '../console/log';
 import {profile} from '../profiler/decorator';
 import {Zerg} from '../zerg/Zerg';
-import {log} from '../console/log';
+import {initializeTask} from './initializer';
 
-type targetType = { ref: string, pos: protoPos }; // overwrite this variable in derived classes to specify more precise typing
+type targetType = { ref: string, pos: ProtoPos }; // overwrite this variable to specify more precise typing
 
-/* An abstract class for encapsulating creep actions. This generalizes the concept of "do action X to thing Y until
+/**
+ * An abstract class for encapsulating creep actions. This generalizes the concept of "do action X to thing Y until
  * condition Z is met" and saves a lot of convoluted and duplicated code in creep logic. A Task object contains
  * the necessary logic for traveling to a target, performing a task, and realizing when a task is no longer sensible
- * to continue.*/
-
+ * to continue.
+ */
 @profile
 export abstract class Task {
 
@@ -35,9 +36,9 @@ export abstract class Task {
 	};
 	_target: { 					// Data for the target the task is directed to:
 		ref: string; 				// Target id or name
-		_pos: protoPos; 			// Target position's coordinates in case vision is lost
+		_pos: ProtoPos; 			// Target position's coordinates in case vision is lost
 	};
-	_parent: protoTask | null; 	// The parent of this task, if any. Task is changed to parent upon completion.
+	_parent: ProtoTask | null; 	// The parent of this task, if any. Task is changed to parent upon completion.
 	tick: number;				// When the task was set
 	settings: TaskSettings;		// Settings for a given type of task; shouldn't be modified on an instance-basis
 	options: TaskOptions;		// Options for a specific instance of a task
@@ -79,7 +80,10 @@ export abstract class Task {
 		this.data = {};
 	}
 
-	get proto(): protoTask {
+	/**
+	 * Get a serialized ProtoTask from the current task
+	 */
+	get proto(): ProtoTask {
 		return {
 			name   : this.name,
 			_creep : this._creep,
@@ -91,7 +95,10 @@ export abstract class Task {
 		};
 	}
 
-	set proto(protoTask: protoTask) {
+	/**
+	 * Set the current task from a serialized ProtoTask
+	 */
+	set proto(protoTask: ProtoTask) {
 		// Don't write to this.name; used in task switcher
 		this._creep = protoTask._creep;
 		this._target = protoTask._target;
@@ -101,12 +108,17 @@ export abstract class Task {
 		this.data = protoTask.data;
 	}
 
-	// Getter/setter for task.creep
+	/**
+	 * Return the wrapped creep which is executing this task
+	 */
 	get creep(): Zerg { // Get task's own creep by its name
 		// Returns zerg wrapper instead of creep to use monkey-patched functions
 		return Overmind.zerg[this._creep.name];
 	}
 
+	/**
+	 * Set the creep which is executing this task
+	 */
 	set creep(creep: Zerg) {
 		this._creep.name = creep.name;
 		if (this._parent) {
@@ -114,12 +126,16 @@ export abstract class Task {
 		}
 	}
 
-	// Dereferences the target
+	/**
+	 * Dereferences the Task's target
+	 */
 	get target(): RoomObject | null {
 		return deref(this._target.ref);
 	}
 
-	// Dereferences the saved target position; useful for situations where you might lose vision
+	/**
+	 * Dereferences the saved target position; useful for situations where you might lose vision
+	 */
 	get targetPos(): RoomPosition {
 		// refresh if you have visibility of the target
 		if (!this._targetPos) {
@@ -131,11 +147,16 @@ export abstract class Task {
 		return this._targetPos;
 	}
 
-	// Getter/setter for task parent
+	/**
+	 * Get the Task's parent
+	 */
 	get parent(): Task | null {
 		return (this._parent ? initializeTask(this._parent) : null);
 	}
 
+	/**
+	 * Set the Task's parent
+	 */
 	set parent(parentTask: Task | null) {
 		this._parent = parentTask ? parentTask.proto : null;
 		// If the task is already assigned to a creep, update their memory
@@ -144,9 +165,11 @@ export abstract class Task {
 		}
 	}
 
-	// Return a list of [this, this.parent, this.parent.parent, ...] as tasks
+	/**
+	 * Return a list of [this, this.parent, this.parent.parent, ...] as tasks
+	 */
 	get manifest(): Task[] {
-		let manifest: Task[] = [this];
+		const manifest: Task[] = [this];
 		let parent = this.parent;
 		while (parent) {
 			manifest.push(parent);
@@ -155,9 +178,11 @@ export abstract class Task {
 		return manifest;
 	}
 
-	// Return a list of [this.target, this.parent.target, ...] without fully instantiating the list of tasks
+	/**
+	 * Return a list of [this.target, this.parent.target, ...] without fully instantiating the list of tasks
+	 */
 	get targetManifest(): (RoomObject | null)[] {
-		let targetRefs: string[] = [this._target.ref];
+		const targetRefs: string[] = [this._target.ref];
 		let parent = this._parent;
 		while (parent) {
 			targetRefs.push(parent._target.ref);
@@ -166,9 +191,11 @@ export abstract class Task {
 		return _.map(targetRefs, ref => deref(ref));
 	}
 
-	// Return a list of [this.target, this.parent.target, ...] without fully instantiating the list of tasks
+	/**
+	 * Return a list of [this.targetPos, this.parent.targetPos, ...] without fully instantiating the list of tasks
+	 */
 	get targetPosManifest(): RoomPosition[] {
-		let targetPositions: protoPos[] = [this._target._pos];
+		const targetPositions: ProtoPos[] = [this._target._pos];
 		let parent = this._parent;
 		while (parent) {
 			targetPositions.push(parent._target._pos);
@@ -177,7 +204,9 @@ export abstract class Task {
 		return _.map(targetPositions, protoPos => derefRoomPosition(protoPos));
 	}
 
-	// Fork the task, assigning a new task to the creep with this task as its parent
+	/**
+	 * Fork the task, assigning a new task to the creep with this task as its parent
+	 */
 	fork(newTask: Task): Task {
 		newTask.parent = this;
 		if (this.creep) {
@@ -186,13 +215,20 @@ export abstract class Task {
 		return newTask;
 	}
 
-	// Test every tick to see if task is still valid
+	/**
+	 * Test every tick to see if task is still valid
+	 */
 	abstract isValidTask(): boolean;
 
-	// Test every tick to see if target is still valid
+	/**
+	 * Test every tick to see if target is still valid
+	 */
 	abstract isValidTarget(): boolean;
 
 
+	/**
+	 * Test if the task is valid; if it is not, automatically remove task and transition to parent
+	 */
 	isValid(): boolean {
 		let validTask = false;
 		if (this.creep) {
@@ -211,32 +247,40 @@ export abstract class Task {
 		} else {
 			// Switch to parent task if there is one
 			this.finish();
-			let isValid = this.parent ? this.parent.isValid() : false;
+			const isValid = this.parent ? this.parent.isValid() : false;
 			return isValid;
 		}
 	}
 
-	/* Move to within range of the target */
+	/**
+	 * Move to within range of the target
+	 */
 	moveToTarget(range = this.settings.targetRange): number {
 		return this.creep.goTo(this.targetPos, {range: range});
 	}
 
-	/* Moves to the next position on the agenda if specified - call this in some tasks after work() is completed */
+	/**
+	 * Moves to the next position on the agenda if specified - call this in some tasks after work() is completed
+	 */
 	moveToNextPos(): number | undefined {
 		if (this.options.nextPos) {
-			let nextPos = derefRoomPosition(this.options.nextPos);
+			const nextPos = derefRoomPosition(this.options.nextPos);
 			return this.creep.goTo(nextPos);
 		}
 	}
 
-	// Return expected number of ticks until creep arrives at its first destination
+	/**
+	 * Return expected number of ticks until creep arrives at its first destination
+	 */
 	get eta(): number | undefined {
 		if (this.creep && this.creep.memory._go && this.creep.memory._go.path) {
 			return this.creep.memory._go.path.length;
 		}
 	}
 
-	// Execute this task each tick. Returns nothing unless work is done.
+	/**
+	 * Execute this task each tick. Returns nothing unless work is done.
+	 */
 	run(): number | undefined {
 		if (this.isWorking) {
 			delete this.creep.memory._go;
@@ -244,7 +288,7 @@ export abstract class Task {
 			// 	// Move to somewhere nearby that isn't on a road
 			// 	this.creep.park(this.targetPos, true);
 			// }
-			let result = this.work();
+			const result = this.work();
 			if (this.settings.oneShot && result === OK) {
 				this.finish();
 			}
@@ -254,14 +298,21 @@ export abstract class Task {
 		}
 	}
 
+	/**
+	 * Return whether the creep is currently performing its task action near the target
+	 */
 	get isWorking(): boolean {
 		return this.creep.pos.inRangeToPos(this.targetPos, this.settings.targetRange) && !this.creep.pos.isEdge;
 	}
 
-	// Task to perform when at the target
+	/**
+	 * Task to perform when at the target
+	 */
 	abstract work(): number;
 
-	// Finalize the task and switch to parent task (or null if there is none)
+	/**
+	 * Finalize the task and switch to parent task (or null if there is none)
+	 */
 	finish(): void {
 		this.moveToNextPos();
 		if (this.creep) {

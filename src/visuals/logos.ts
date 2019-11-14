@@ -1,3 +1,5 @@
+/* tslint:disable: max-line-length */
+
 export const asciiLogo: string[] =
 				 ['___________________________________________________________',
 				  '',
@@ -11,6 +13,12 @@ export const asciiLogoSmall: string[] =
 				 [' _____  _    _ _______  ______ _______ _____ __   _ ______ ',
 				  '|     |  \\  /  |______ |_____/ |  |  |   |   | \\  | |     \\',
 				  '|_____|   \\/   |______ |    \\_ |  |  | __|__ |  \\_| |_____/'];
+
+export const asciiLogoRL: string[] =
+				 [' _____  _    _ _______  ______ _______ _____ __   _ ______ ',
+				  '|     |  \\  /  |______ |_____/ |  |  |   |   | \\  | |     \\',
+				  '|_____|   \\/   |______ |    \\_ |  |  | __|__ |  \\_| |_____/',
+				  '....... R E I N F O R C E M E N T   L E A R N I N G .......'];
 
 
 const _logoComponents: { [part: string]: { style: PolyStyle, points: [number, number][] } } = {
@@ -104,8 +112,8 @@ const textScale = 0.6 * logoScale;
 const charScale = 0.052 * textScale;
 
 let offset = 0;
-export const logoText = _.mapValues(_logoText, function (c) {
-	let ret = {
+export const logoText = _.mapValues(_logoText, function(c) {
+	const ret = {
 		style : c.style,
 		points: _.map(c.points, xy => [textX + textScale * (offset + xy[0]),
 									   textY + textScale * xy[1]])

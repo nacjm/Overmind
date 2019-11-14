@@ -1,13 +1,16 @@
-import {Directive} from '../Directive';
-import {profile} from '../../profiler/decorator';
-import {DefenseNPCOverlord} from '../../overlords/defense/npcDefense';
 import {GuardSwarmOverlord} from '../../overlords/defense/guardSwarm';
+import {DefenseNPCOverlord} from '../../overlords/defense/npcDefense';
+import {profile} from '../../profiler/decorator';
+import {Directive} from '../Directive';
 
 interface DirectiveGuardMemory extends FlagMemory {
 	safeTick?: number;
 	enhanced?: boolean;
 }
 
+/**
+ * NPC defense directive for outpost rooms with invaders
+ */
 @profile
 export class DirectiveGuard extends Directive {
 

@@ -1,20 +1,25 @@
-import {Mem} from '../memory/Memory';
+/* tslint:disable:no-string-literal */
+
 import {log} from '../console/log';
-import {DEFAULT_OVERMIND_SIGNATURE} from '../~settings';
+import {Mem} from '../memory/Memory';
 
 interface VersionMigratorMemory {
 	versions: { [version: string]: boolean };
 }
 
+/**
+ * The VersionMigration class contains ad-hoc methods for migrating older versions of Overmind to newer versions
+ */
 export class VersionMigration {
 
 	static run(): void {
-		// if (!this.memory.versions['02Xto03X']) {
-		// 	this.migrate_02X_03X();
-		// }
-		// if (!this.memory.versions['03Xto04X']) {
-		// 	this.migrate_03X_04X();
-		// }
+		/*
+		if (!this.memory.versions['02Xto03X']) {
+			this.migrate_02X_03X();
+		}
+		if (!this.memory.versions['03Xto04X']) {
+			this.migrate_03X_04X();
+		}
 		if (!this.memory.versions['04Xto05X']) {
 			this.migrate_04X_05X();
 		}
@@ -24,6 +29,8 @@ export class VersionMigration {
 		if (!this.memory.versions['04Xto05X_part3']) {
 			this.migrate_04X_05X_part3();
 		}
+		*/
+
 		if (!this.memory.versions['05Xto051']) {
 			this.migrate_050_051();
 		}
@@ -36,6 +43,12 @@ export class VersionMigration {
 		if (!this.memory.versions['05Xto051_part4']) {
 			this.migrate_050_051_part4();
 		}
+		if (!this.memory.versions['051to052']) {
+			this.migrate_051_052();
+		}
+		if (!this.memory.versions['052to053']) {
+			this.migrate_052_053();
+		}
 	}
 
 	static get memory(): VersionMigratorMemory {
@@ -44,63 +57,64 @@ export class VersionMigration {
 		});
 	}
 
-	// static migrate_02X_03X() {
-	// 	// This technically won't run correctly because it gets run only on global reset, but no one is using v0.2.x
-	// 	// anymore anyway, so I don't feel the need to maintain support for this function
-	// 	let allColoniesUpdated = true;
-	// 	let i = 0;
-	// 	for (let name in Memory.colonies) {
-	// 		let rpMemory = Memory.colonies[name].roomPlanner;
-	// 		let lastBuilt = rpMemory.lastGenerated;
-	// 		// Reboot colony room planners one at a time every 3 ticks
-	// 		if (!lastBuilt) {
-	// 			allColoniesUpdated = false;
-	// 			if (Game.time % 100 == 3 * i) {
-	// 				// Delete all white/white routing hints from memory
-	// 				rpMemory.savedFlags = _.filter(rpMemory.savedFlags, (flag: {secondaryColor: number}) =>
-	// 					flag.secondaryColor != COLOR_WHITE);
-	// 				rpMemory.active = true;
-	// 				log.alert(`Version migration: rebooting roomPlanner for colony ${name}!`);
-	// 			} else if (Game.time % 100 == 3 * i + 1) {
-	// 				colony.roomPlanner.finalize(true);
-	// 			}
-	// 		}
-	// 	}
-	// 	if (allColoniesUpdated) {
-	// 		this.memory.versions['02Xto03X'] = true;
-	// 		log.alert(`Version migration from 0.2.x -> 0.3.x completed successfully.`);
-	// 	}
-	// }
+	/*
+	static migrate_02X_03X() {
+		// This technically won't run correctly because it gets run only on global reset, but no one is using v0.2.x
+		// anymore anyway, so I don't feel the need to maintain support for this function
+		let allColoniesUpdated = true;
+		let i = 0;
+		for (let name in Memory.colonies) {
+			let rpMemory = Memory.colonies[name].roomPlanner;
+			let lastBuilt = rpMemory.lastGenerated;
+			// Reboot colony room planners one at a time every 3 ticks
+			if (!lastBuilt) {
+				allColoniesUpdated = false;
+				if (Game.time % 100 == 3 * i) {
+					// Delete all white/white routing hints from memory
+					rpMemory.savedFlags = _.filter(rpMemory.savedFlags, (flag: {secondaryColor: number}) =>
+						flag.secondaryColor != COLOR_WHITE);
+					rpMemory.active = true;
+					log.alert(`Version migration: rebooting roomPlanner for colony ${name}!`);
+				} else if (Game.time % 100 == 3 * i + 1) {
+					colony.roomPlanner.finalize(true);
+				}
+			}
+		}
+		if (allColoniesUpdated) {
+			this.memory.versions['02Xto03X'] = true;
+			log.alert(`Version migration from 0.2.x -> 0.3.x completed successfully.`);
+		}
+	}
 
-	// static migrate_03X_04X() {
-	// 	// Update creep memory
-	// 	for (let i in Memory.creeps) {
-	// 		// Migrate all old-style overlord references to new ones
-	// 		if (Memory.creeps[i].overlord) {
-	// 			let hcName = Memory.creeps[i].overlord!.split(':')[0];
-	// 			if (hcName == 'commandCenter'
-	// 				|| hcName == 'hatchery'
-	// 				|| hcName == 'evolutionChamber'
-	// 				|| hcName == 'miningSite'
-	// 				|| hcName == 'upgradeSite') {
-	// 				let id = Memory.creeps[i].overlord!.split(':')[1];
-	// 				let roomObject = Game.getObjectById(id) as RoomObject | undefined;
-	// 				if (roomObject) {
-	// 					let overlordName = Memory.creeps[i].overlord!.split(':')[2];
-	// 					Memory.creeps[i].overlord = hcName + '@' + roomObject.pos.name + ':' + overlordName;
-	// 				}
-	// 			}
-	// 		}
-	// 		// Change all miner roles to drone roles
-	// 		if (Memory.creeps[i].role == 'miner') {
-	// 			Memory.creeps[i].role = 'drone';
-	// 		}
-	// 	}
-	// 	// Delete old-style miningSite overlords from memory
-	// 	OvermindConsole.deepCleanMemory();
-	// 	this.memory.versions['03Xto04X'] = true;
-	// 	log.alert(`Version migration from 0.3.x -> 0.4.x completed successfully.`);
-	// }
+	static migrate_03X_04X() {
+		// Update creep memory
+		for (let i in Memory.creeps) {
+			// Migrate all old-style overlord references to new ones
+			if (Memory.creeps[i].overlord) {
+				let hcName = Memory.creeps[i].overlord!.split(':')[0];
+				if (hcName == 'commandCenter'
+					|| hcName == 'hatchery'
+					|| hcName == 'evolutionChamber'
+					|| hcName == 'miningSite'
+					|| hcName == 'upgradeSite') {
+					let id = Memory.creeps[i].overlord!.split(':')[1];
+					let roomObject = Game.getObjectById(id) as RoomObject | undefined;
+					if (roomObject) {
+						let overlordName = Memory.creeps[i].overlord!.split(':')[2];
+						Memory.creeps[i].overlord = hcName + '@' + roomObject.pos.name + ':' + overlordName;
+					}
+				}
+			}
+			// Change all miner roles to drone roles
+			if (Memory.creeps[i].role == 'miner') {
+				Memory.creeps[i].role = 'drone';
+			}
+		}
+		// Delete old-style miningSite overlords from memory
+		OvermindConsole.deepCleanMemory();
+		this.memory.versions['03Xto04X'] = true;
+		log.alert(`Version migration from 0.3.x -> 0.4.x completed successfully.`);
+	}
 
 	static migrate_04X_05X() {
 		let migrateClusterNames = ['commandCenter', 'evolutionChamber', 'hatchery', 'upgradeSite'];
@@ -156,9 +170,11 @@ export class VersionMigration {
 		log.alert(`Version migration from 0.4.x -> 0.5.x (part 3) completed successfully.`);
 	}
 
+	*/
+
 	static migrate_050_051() {
 		// Destroy all links that aren't hatchery or commandCenter links
-		for (let id in Game.structures) {
+		for (const id in Game.structures) {
 			const s = Game.structures[id];
 			if (s.structureType == STRUCTURE_LINK) {
 				const isCommandCenterLink = s.pos.findInRange(_.compact([s.room.storage!,
@@ -170,10 +186,10 @@ export class VersionMigration {
 			}
 		}
 		let count = 0;
-		for (let name in Game.creeps) {
+		for (const name in Game.creeps) {
 			const creep = Game.creeps[name];
 			if (creep.memory.role == 'drone' &&
-				creep.memory.overlord && creep.memory.overlord.includes('miningSite')) {
+				(<any>creep.memory).overlord && (<any>creep.memory).overlord.includes('miningSite')) {
 				creep.suicide();
 				count++;
 			}
@@ -185,7 +201,7 @@ export class VersionMigration {
 
 	static migrate_050_051_part2() {
 		// Destroy all links that aren't hatchery or commandCenter links
-		for (let name in Game.creeps) {
+		for (const name in Game.creeps) {
 			const creep = Game.creeps[name];
 			if (creep.memory.role == 'reserver') {
 				creep.memory.role = 'infestor';
@@ -209,8 +225,8 @@ export class VersionMigration {
 		const protectedKeywords = ['suspendUntil', 'amount', 'created', 'persistent', 'setPosition', 'rotation',
 								   'colony', 'parent', 'pathing', 'stats', 'safeTick', 'enhanced', 'persistent',
 								   'recoveryWaypoint', 'totalResources', 'maxPathLength', 'maxLinearRange'];
-		for (let name in Memory.flags) {
-			for (let prop in Memory.flags[name]) {
+		for (const name in Memory.flags) {
+			for (const prop in Memory.flags[name]) {
 				if (!protectedKeywords.includes(prop)) {
 					delete (<any>Memory.flags[name])[prop];
 				}
@@ -218,6 +234,81 @@ export class VersionMigration {
 		}
 		this.memory.versions['05Xto051_part4'] = true;
 		log.alert(`Version migration from 0.5.0 -> 0.5.1 (part 4) completed successfully.`);
+	}
+
+	static migrate_051_052() {
+		if (__VERSION__ == '0.5.2') {
+			for (const name in Game.creeps) {
+				if (name.includes('mutalisk')) {
+					Game.creeps[name].suicide();
+				}
+			}
+		}
+		this.memory.versions['051to052'] = true;
+		log.alert(`Version migration from 0.5.1 -> 0.5.2 completed successfully.`);
+	}
+
+	static migrate_052_053() {
+
+		// Reformat flag and harvest directive memory
+		const newFlagKeys: { [oldKey: string]: string } = {
+			created   : _MEM.TICK,
+			expiration: _MEM.EXPIRATION,
+			overlord  : _MEM.OVERLORD,
+			colony    : _MEM.COLONY,
+		};
+		for (const name in Memory.flags) {
+
+			// Replace old keys with new ones
+			Memory.flags[name] = _.mapKeys((<any>Memory.flags[name]), function(value, key) {
+				return newFlagKeys[key] || key;
+			});
+
+			// Special opertions for harvest flags
+			if (name.includes('harvest:')) {
+				const pathing = (<any>Memory.flags[name]).pathing;
+				if (pathing) {
+					(<any>Memory.flags[name])['P'] = {
+						D: pathing.distance,
+						X: pathing.expiration,
+					};
+					delete (<any>Memory.flags[name]).pathing;
+				}
+				(<any>Memory.flags[name])['u'] = (<any>Memory.flags[name]).stats.usage;
+				(<any>Memory.flags[name])['d'] = (<any>Memory.flags[name]).stats.downtime;
+				delete (<any>Memory.flags[name]).stats;
+			}
+
+		}
+
+		// Reformat creep memory
+		const newCreepKeys: { [oldKey: string]: string } = {
+			overlord: _MEM.OVERLORD,
+			colony  : _MEM.COLONY,
+		};
+		for (const name in Memory.creeps) {
+			// Replace old keys with new ones
+			(<any>Memory.creeps[name]) = _.mapKeys((<any>Memory.creeps[name]), function(value, key) {
+				return newCreepKeys[key] || key;
+			});
+		}
+
+		// Delete outdated colony memory properties
+		for (const name in Memory.colonies) {
+			for (const key in Memory.colonies[name]) {
+				if (key.includes('miningSite@')) {
+					delete Memory.colonies[name][key];
+				}
+			}
+		}
+
+		// Delete ALL room memory
+		for (const name in Memory.rooms) {
+			delete Memory.rooms[name];
+		}
+
+		this.memory.versions['052to053'] = true;
+		log.alert(`Version migration from 0.5.2 -> 0.5.3 completed successfully.`);
 	}
 
 }

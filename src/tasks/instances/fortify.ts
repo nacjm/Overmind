@@ -1,5 +1,5 @@
-import {Task} from '../Task';
 import {profile} from '../../profiler/decorator';
+import {Task} from '../Task';
 
 
 export type fortifyTargetType = StructureWall | StructureRampart;
@@ -18,7 +18,7 @@ export class TaskFortify extends Task {
 	}
 
 	isValidTask() {
-		return (this.creep.carry.energy > 0);
+		return (this.creep.carry.energy > 0); // Times out once creep is out of energy
 	}
 
 	isValidTarget() {

@@ -1,12 +1,15 @@
-import {Overlord} from '../Overlord';
+import {Roles, Setups} from '../../creepSetups/setups';
 import {UpgradeSite} from '../../hiveClusters/upgradeSite';
-import {Zerg} from '../../zerg/Zerg';
-import {Tasks} from '../../tasks/Tasks';
 import {OverlordPriority} from '../../priorities/priorities_overlords';
 import {profile} from '../../profiler/decorator';
 import {boostResources} from '../../resources/map_resources';
-import {Roles, Setups} from '../../creepSetups/setups';
+import {Tasks} from '../../tasks/Tasks';
+import {Zerg} from '../../zerg/Zerg';
+import {Overlord} from '../Overlord';
 
+/**
+ * Spawns an upgrader to upgrade the room controller
+ */
 @profile
 export class UpgradingOverlord extends Overlord {
 
@@ -25,8 +28,11 @@ export class UpgradingOverlord extends Overlord {
 	}
 
 	init() {
-		if (this.colony.assets[RESOURCE_ENERGY] > UpgradeSite.settings.storageBuffer
-			|| this.upgradeSite.controller.ticksToDowngrade < 5000) {
+		if (this.colony.level < 3) { // can't spawn upgraders at early levels
+			return;
+		}
+		if (this.colony.assets[RESOURCE_ENERGY] > UpgradeSite.settings.energyBuffer
+			|| this.upgradeSite.controller.ticksToDowngrade < 500) {
 			const setup = this.colony.level == 8 ? Setups.upgraders.rcl8 : Setups.upgraders.default;
 			if (this.colony.level == 8) {
 				this.wishlist(1, setup);
@@ -71,7 +77,7 @@ export class UpgradingOverlord extends Overlord {
 				upgrader.task = Tasks.withdraw(this.upgradeSite.battery);
 			}
 			// Find somewhere else to recharge from
-			else {
+			else { // TODO: BUG HERE IF NO UPGRADE CONTAINER
 				if (this.upgradeSite.battery && this.upgradeSite.battery.targetedBy.length == 0) {
 					upgrader.task = Tasks.recharge();
 				}

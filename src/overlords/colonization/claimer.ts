@@ -1,23 +1,44 @@
-import {Overlord} from '../Overlord';
-import {Zerg} from '../../zerg/Zerg';
-import {Tasks} from '../../tasks/Tasks';
+import {$} from '../../caching/GlobalCache';
+import {Roles, Setups} from '../../creepSetups/setups';
 import {Directive} from '../../directives/Directive';
+import {Pathing} from '../../movement/Pathing';
 import {OverlordPriority} from '../../priorities/priorities_overlords';
 import {profile} from '../../profiler/decorator';
-import {Roles, Setups} from '../../creepSetups/setups';
+import {Tasks} from '../../tasks/Tasks';
+import {Zerg} from '../../zerg/Zerg';
+import {Overlord} from '../Overlord';
 
+/**
+ * Claim an unowned room
+ */
 @profile
 export class ClaimingOverlord extends Overlord {
 
 	claimers: Zerg[];
+	directive: Directive;
 
 	constructor(directive: Directive, priority = OverlordPriority.colonization.claim) {
 		super(directive, 'claim', priority);
+		this.directive = directive;
 		this.claimers = this.zerg(Roles.claim);
 	}
 
 	init() {
-		let amount = (this.room && this.room.controller && this.room.controller.my) ? 0 : 1;
+		const amount = $.number(this, 'claimerAmount', () => {
+			if (this.room) { // if you have vision
+				if (this.room.my) { // already claimed
+					return 0;
+				} else { // don't ask for claimers if you can't reach controller
+					const pathablePos = this.room.creeps[0] ? this.room.creeps[0].pos
+															: Pathing.findPathablePosition(this.room.name);
+					if (!Pathing.isReachable(pathablePos, this.room.controller!.pos,
+											 _.filter(this.room.structures, s => !s.isWalkable))) {
+						return 0;
+					}
+				}
+			}
+			return 1; // otherwise ask for 1 claimer
+		});
 		this.wishlist(amount, Setups.infestors.claim);
 	}
 
@@ -34,8 +55,7 @@ export class ClaimingOverlord extends Overlord {
 				claimer.task = Tasks.claim(this.room.controller!);
 			}
 		} else {
-			// claimer.task = Tasks.goTo(this.pos, {moveOptions: {ensurePath: true}});
-			claimer.goTo(this.pos, {ensurePath: true, preferHighway: true});
+			claimer.goTo(this.pos, {ensurePath: true, avoidSK: true, waypoints: this.directive.waypoints});
 		}
 	}
 

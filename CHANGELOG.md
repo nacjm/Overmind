@@ -4,6 +4,148 @@ All notable changes to this project will be documented in this file. The format 
 ## [Unreleased]
 
 ### Added
+- Created a [documentation site](https://bencbartlett.github.io/overmind-docs/) using TypeDoc!
+    - Added/reformatted docstring-comments throughout the codebase
+- Added the `RemoteDebugger` module, which lets me remotely debug other Overmind players' code in real-time by communicating through public memory segments. 
+    - You can start and end a debug session with the `startRemoteDebugSession()` and `endRemoteDebugSession()` commands
+    - Debug sessions automatically time out after 1000 ticks unless extended
+    - Ping me on Slack #overmind if you want me to debug something for you
+        - I can only remotely debug players on a shard that I have a presence in (currently only `shard2`)
+    - This allows for me to remotely execute arbitrary code, but I promise not to be evil! <3 
+- `DirectiveRoomClear`, which claims a room, destroys all hostile structures in the room (by default, keeping store structures and roads intact), then unclaims the room. This is useful for cleaning out remote outposts which were previously claimed rooms
+- Added room layout analysis to `CombatPlanner`, which classifies rooms to one of the four most common types of rooms:
+    - Bunkers: most structures in the rooms are covered by ramparts
+    - EdgeWall: barriers placed as close as possible to all room exits
+    - InnerWall: barriers placed to enclose structures but are recessed from the room exits
+    - Exposed: key structures are pathable to from some room exit
+- Added additional heap cleaning routines to prevent periodic bucket crashes. At low bucket, the global cache will periodically be cleared, and at even lower buckets, `Game.cpu.halt()` will occasionally be called.
+- `Visualizer` content:
+    - Added `displayCostMatrix` method, which is useful for debugging pathfinding operations
+        - Added `displayCostMatrix` option to combat and swarm `MoveOptions`
+- Added logic to suspend and unsuspend a colony. Suspended colonies will not be run, and their associated directives/overlords will not be handled either.
+    - Use `suspendColony(roomName)` and `unsuspendColony(roomName)` in the console to do this.
+- Added `in/out` terminal exception states, which seek to set the terminal contents to exactly the specified amounts, pushing everything else from the terminal to the network
+    - Changed `TerminalState_Rebuild` to an `in/out` state
+- Nuke defense behavioral improvements:
+    - Boosted workers will be spawned to fortify ramparts with incoming nukes
+    - Towers will not repair nuked ramparts unless they calculate that fortifications will not finish in time
+    - Workers now prioritize fortifying ramparts covering important structures first
+- Market improvements:
+    - New console method: `cancelmMarketOrders(filter?)`: cancels all market orders matching filter (if provided)
+    - Will now place and maintain buy orders for energy if average colony energy is too low and player has sufficient credits
+    - Reduced terminal equilibrium energy from 100k to 50k
+
+### Changed
+- MASSIVE memory size reduction: many common memory keys have been aliased to single-character names using a set of constant enums in `memory.d.ts`. For example, `memory.colony` is now `memory.C` and is referenced in code as `memory[_MEM.COLONY]`.
+    - You can expect your memory usage to drop by about half(!) after applying this change.
+- `MiningOverlord` will now suicide old miners when their replacements arrive, preventing excess CPU use
+- Major improvements to swarm target finding/avoiding logic
+- `Directive`s no longer have a `requiredRCL` property and now take more general `colonyFilter` optional arguments in their constructor
+- Managers will transfer 200000 energy from terminal to storage before it gets destroyed in the event of a rebuild state
+- Updated the Grafana dashboard to reflect lots of accumulated changes
+- `Abathur` now tries to synthesize a number of intermediate compounds if some minerals are unavailable (thanks, Conventia!)
+- Increased the scaling of number of upgraders to 1 upgrade part per 10k energy above threshold, down from 25k. This should make the bot spawn more upgraders below RCL8 and operate with less excess energy in storage.
+- Project now complies with tslint standards specified in the configuration file; lint checks have been added to the CI scripts
+
+### Fixed
+- Fixed a critical issue which caused the CPU reset routine to repeat indefinitely in low-CPU environments like shard3 (#65)
+- Security patch for `Assimilator`
+- Fixed a bug in `WorkerOverlord` where workers would not fortify ramparts to the needed hits to withstand multiple stacked nuclear strikes
+- Fixed a `RoadPlanner` bug which caused it to prever pathing roads along edge tiles between rooms
+- Fixed a recently-introduced bug which prevented drones from repairing their containers
+- `Swarm` bugfixes -- swarms should now pivot and swap orientations correctly, preserving the reflexive parity of the formation
+- Fixed a bug which caused towers to fire too readily on hostiles
+- Fixed a bug which caused towers to not fire readily enough on hostiles
+- Fixed a bug which could calculate `outpostIndex` to be negative, messing up creep spawning priorities
+- Fixed a typo which miscalculated needed fortification hits for ramparts with incoming nukes
+- Fixed unhandled memory access when spawning in for the very first time on a new account (#75)
+- Fixed a bug in `RoomPosition.getPositionsAtRange` (thanks, Conventia!)
+- Account for hitback when computing `hitsPredicted`
+- Various `CombatIntel` and `RoomIntel` bugfixes
+- No longer calls `Directive.spawnMoarOverlords()` if directive instantiation is aborted (in lieu of #82)
+
+
+## Overmind [0.5.2.1] - 2019.2.8
+
+This patch fixes a critical bug with the `RoomIntel` module.
+
+### Fixed
+- Fixed an unprotected access error with `RoomIntel.getSafetyData()`
+
+
+
+## Overmind [0.5.2] - 2019.2.1
+
+This release adds improvements to Overmind's performance at lower RCL, fixes boosting logic to account for the removal of pre-boosting, and improves road planning, room intel, and swarms. This release is the version running in botarena 202.
+
+### Added
+- Visualizer improvements:
+    - Added a dashboard section for the evolution chamber
+    - Labs now display their mineralTypes overlaid as a room visual
+    - Added version update messages to the notifications board when available
+- Improvements to swarms:
+    - All overlords controlling swarms are now extended from the `SwarmOverlord <- CombatOverlord <- Overlord` class
+        - New `swarmWishlist` method prevents swarms from spawning "out of sync"
+    - Improvements to swarm assembly point calculations; supports multiple swarms now
+    - `Swarm.pivot()` provides more reliable in-place rotation without breaking formation
+- New console methods:
+    - `notifications()` will print out a list of notifications shown in the GUI with links to rooms
+    - `listDirectives()` now takes an optional functional-style filter, such as `listDirectives(dir => dir.color == COLOR_PURPLE && !!dir.overlords.colonize)`
+    - `listConstructionSites()`, which takes an optional functional filter
+- Smarter behavior when dealing with over-stressed hatcheries
+    - New `overload` stat tracks the rolling average of ticks where the hatchery is idle, wants to spawn something, but is unable to because it is being loaded
+- RoadPlanner improvements:
+    - New routing algorithm allows for tunnel placement, although this will be relatively rare due to very high maintenance costs
+    - Changes to `Colony.destinations` ensures more determinism when recomputing road networks; you should notice a decrease in roads which become deprecated as levels grow or outposts are added
+    - `RoadPlanner.roadCoverage` property tracks paving completion throughout a colony; transporter bodies will now use this stat rather than colony level to determine when to switch between setups with 1:1 and 2:1 carry:move ratios
+- New information tracked with `RoomIntel`:
+    - (Approximate) harvesting data and rolling averages of energy/tick over 10k, 100k, and 1M ticks
+    - Casualty data, with effective energy costs and rolling average of cost/tick over 10k, 100k, 1M ticks
+    - Creep occupancy data over the last 25 ticks (computed only in owned rooms)
+    - Safety data, tracking consecutive safe, unsafe ticks and rolling average of safety over last 1k and 10k ticks
+- `CombatIntel.isEdgeDancing` uses creep occupancy data tracked in `RoomIntel` to determine if a likely tower drain attack is occurring; towers will adjust their firing patterns accordingly.
+- Initial (incomplete) implementation of `CombatPlanner`, which will coordinate automatic offensive and defensive actions betweeen colonies.
+
+### Changed
+- Rewrote the boosting protocol to account for the removal of [pre-boosting capabilities](https://blog.screeps.com/2018/12/changelog-2018-12-14/#Other-changes). RIP in-spawn boosting, you will be missed... :'(
+    - Instead of three booster labs (one adjacent to each spawn), each applying every boost to their respective creeps, the new system allows up to 8 boosting labs, which will contain the total current amount of each distinct resource needed by all creeps currently being spawned by the colony.
+- Improvements to keeping newly-constructed ramparts alive at low RCL: towers will repair critical ramparts below RCL5, and workers will prioritize fortifying critical ramparts above repairs
+- Overlords are now instantiated immeditely after a directive is placed rather than having to wait for the next full `rebuild()`
+- Pioneers will remove structures blocking a controller from being claimed, and claimers won't spawn until controller is reachable
+- Workers will upgrade controllers sooner at higher levels and will spawn when a downgrade is imminent
+- Non-stationary managers have fewer move parts in bunker-type colonies
+- Reservers allow for a lower reservation buffer and will use the cached reservation info from `RoomIntel` if vision is unavailable
+- Queens now spawn with 1:1 move:carry ratios until a storage is built
+- Changes to overlord priorities at lower RCL
+- Tweaks to safemode and invasionDefense triggers
+- UpgradeSites won't place containers until RCL 2
+- Consolidated mutalisk and hydralisk body plans
+
+### Removed
+- Deprecated directives and overlords for old siege and healpoint logic
+
+### Fixed
+- Security patches and bugfixes for the `Assimilator`
+- Pioneers and claimers should no longer navigate through dangerous source keeper territory
+- Fixed an issue in `TaskRecharge` which could cause some creeps, like pioneers, to not harvest from a fully-surrounded source that they were adjacent to, causing gridlock situations
+- Added a check to prevent `Overlord.wishlist()` from requesting too many creeps; this was prompted due to a subtle division by zero error in `outpostDefenseOverlord` causing Overmind to crash in the last two BotArena rounds
+- Fixed a bug causing excess energy to accumulate in terminals rather than be sold on the market as much as it should
+- Fixed an issue causing `CombatZerg` to occasionally load as `Zerg`
+- Fixed a bug in `Abathur.getReactionQueue()` which could cause it to ignore market resources on private servers
+- Fixed a bug where fillers would try to withdraw from nukes
+- Improved drone constructionSite build time
+- Fixed a bug where `RoomPlanner` would not properly demolish hostile structures in a newly claimed room
+- Extraction directives now remove themselves if colony downgrades below RCL6
+- Fixed a bug where low-level min-cut barriers for a bunker placed too close to the edge would not fully enclose the base (#43)
+    - This bug has not been fixed for the older two-part base style, which will soon be deprecated
+
+
+
+## Overmind [0.5.1] - 2019.1.2
+
+This patch changes the architecture of Overmind to be much more CPU efficient by introducing a cache-friendly `refresh()` phase to the main loop. See [this blog post](https://bencbartlett.wordpress.com/2019/01/02/screeps-6-verifiably-refreshed/) for more details. Additionally, the `Visualizer` system has been rewritten, and prelimiary support for assimilation and swarms has been added.
+
+### Added
 - Huge persistence update: much of the Overmind architecture now persists on global between ticks! This saves a ton of CPU that was previously used toward garbage collection.
     - The global `Overmind` object is now rebuilt every 20 ticks; in the meantime, `refresh()` is called
     - Colonies, HiveClusters, Directives, Overlords, and Zerg are also persistent
@@ -21,7 +163,6 @@ All notable changes to this project will be documented in this file. The format 
     - Completed the "key exchange protocol" that the assimilator uses to periodically validate codebases
 - Preliminary support for formation-based movement and pathfinding using `Swarm`s
     - Added behavioral locks to prevent usage of this feature for non-assimilated codebases
-
 
 ### Changed
 - Improvements to `RangedDefenseOverlord` which utilize some of the new combat logic developed for SK mining
@@ -57,7 +198,6 @@ All notable changes to this project will be documented in this file. The format 
 - Limits the number of owned rooms you can own on CPU-limited `shard3` to three
     - Adjustable value in `~settings.ts`; will implement a more sophisticated CPU-based limiter in future
 
-
 ### Fixed
 - Bugfix with pioneer recharging behavior to include dropped resources in recharging options
 - Bugfix for incorrectly initialized terminalNetwork memory not logging transfer costs correctly (#38, thanks @MaggNorway!)
@@ -71,9 +211,9 @@ All notable changes to this project will be documented in this file. The format 
 - Fixed an issue in testing assimilation status outside `shard2` (#57)
 - Fixed a bug where queens could get idle indefinitely at early RCL if minerals ended up in Hatchery battery
 
-
 ### Removed
 - `MiningSite`s and `ExtractionSite`s have been removed; their functionalities have been split among the mining/extraction directives and overlords
+
 
 
 ## Overmind [0.5.0]: "Evolution" - 2018.8.10
@@ -148,6 +288,8 @@ Important notes as of this release:
 - Deprecated `DirectiveLogisticsRequest`
 - Removed `lodash.minBy` dependencies to reduce compiled codebase size
 
+
+
 ## Overmind [0.4.1] - 2018.6.15
 
 This patch makes Abathur a little smarter in which reactions he chooses and fixes some bugs accidentally introduced by changes in the last release.
@@ -164,6 +306,7 @@ This patch makes Abathur a little smarter in which reactions he chooses and fixe
 - Fixed a bug where colony substrings in a flag name could cause a directive to reference the wrong colony, e.g. "E11S12" directs to "E11S1"
 - Fixed a bug introduced when CreepSetups were refactored in the last release that could cause bootstrapping directives to fail to run
 - Fixed a bug in LogisticsNetwork where predicted carry amounts could exceed carry capacity
+
 
 
 ## Overmind [0.4.0]: "require('more-minerals')" - 2018.6.14
@@ -243,7 +386,10 @@ Finally, we now have a [feature request](https://github.com/bencbartlett/Overmin
 ### Removed
 - Removed all contents from `src/deprecated`
 
+
+
 ## Overmind [0.3.1] - 2018.5.12
+
 ### Added
 - Workers sign controllers at low RCL
 
@@ -252,6 +398,7 @@ Finally, we now have a [feature request](https://github.com/bencbartlett/Overmin
 
 ### Removed
 - Removed `LabMineralType` directive as it is no longer relevant
+
 
 
 ## Overmind [0.3.0]: "Back to base-ics" - 2018.5.9
@@ -312,7 +459,9 @@ The terminal network has been improved as well, and now tracks transfers between
 - Fixed a bug where upgradeSites could misidentify their input in some pathological room layouts
 
 
+
 ## Overmind [0.2.1] - 2018.3.22
+
 ### Added
 - Memory stat collection and `User` variable (#3 - thanks CoolFeather2!)
 - Brief setup instructions for dashboard
@@ -325,6 +474,7 @@ The terminal network has been improved as well, and now tracks transfers between
 ### Fixed 
 - Bugfixes with rollup and screeps-profiler
 - Moved changelog to root
+
 
 
 ## Overmind [0.2.0]: "Logistics Logic" - 2018.3.15
@@ -352,13 +502,19 @@ This release completely overhauls the logistics system in Overmind, replacing ha
 release of the Task system)
 
 
+
 ## Overmind [0.1.0]: "GL HF" - 2018.3.2
-This release was initially deployed on 2018.3.2 but was re-versioned on 2018.3.15.
+
+(This release was initially deployed on 2018.3.2 but was re-versioned on 2018.3.15.)
+
 ### Added
 - Initial pre-release of Overmind after 190 commits and about 80,000 additions.
 
 
-[Unreleased]: https://github.com/bencbartlett/Overmind/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/bencbartlett/Overmind/compare/v0.5.2.1...HEAD
+[0.5.2.1]: https://github.com/bencbartlett/Overmind/compare/v0.5.2...v0.5.2.1
+[0.5.1]: https://github.com/bencbartlett/Overmind/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/bencbartlett/Overmind/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/bencbartlett/Overmind/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/bencbartlett/Overmind/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/bencbartlett/Overmind/compare/v0.3.1...v0.4.0

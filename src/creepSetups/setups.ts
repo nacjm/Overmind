@@ -1,26 +1,33 @@
 import {CreepSetup} from './CreepSetup';
 
+/**
+ * A mapping of role types to string constants used for naming creeps and accessing them by role
+ */
 export const Roles = {
 	// Civilian roles
-	drone      : 'drone',
-	filler     : 'filler',
-	claim      : 'infestor',
-	pioneer    : 'pioneer',
-	manager    : 'manager',
-	queen      : 'queen',
-	scout      : 'scout',
-	transport  : 'transport',
-	worker     : 'worker',
-	upgrader   : 'upgrader',
+	drone     : 'drone',
+	filler    : 'filler',
+	claim     : 'infestor',
+	pioneer   : 'pioneer',
+	manager   : 'manager',
+	queen     : 'queen',
+	scout     : 'scout',
+	transport : 'transport',
+	worker    : 'worker',
+	upgrader  : 'upgrader',
 	// Combat roles
-	guardMelee : 'broodling',
-	guardRanged: 'mutalisk',
-	melee      : 'zergling',
-	ranged     : 'hydralisk',
-	healer     : 'transfuser',
-	dismantler : 'lurker',
+	guardMelee: 'broodling',
+	// guardRanged: 'mutalisk',
+	melee     : 'zergling',
+	ranged    : 'hydralisk',
+	healer    : 'transfuser',
+	bunkerGuard : 'bunkerGuard',
+	dismantler: 'lurker',
 };
 
+/**
+ * This object contains categorized default body setups for various types of creeps
+ */
 export const Setups = {
 
 	drones: {
@@ -91,6 +98,11 @@ export const Setups = {
 	managers: {
 
 		default: new CreepSetup(Roles.manager, {
+			pattern  : [CARRY, CARRY, CARRY, CARRY, MOVE],
+			sizeLimit: 3,
+		}),
+
+		twoPart: new CreepSetup(Roles.manager, {
 			pattern  : [CARRY, CARRY, MOVE],
 			sizeLimit: 8,
 		}),
@@ -170,8 +182,15 @@ export const Setups = {
 
 };
 
+
+/**
+ * This object contains default body setups for various types of combat-related creeps
+ */
 export const CombatSetups = {
 
+	/**
+	 * Zerglings are melee-only creeps (with exception of sourceKeeper setup)
+	 */
 	zerglings: {
 
 		default: new CreepSetup(Roles.melee, {
@@ -185,12 +204,12 @@ export const CombatSetups = {
 		}),
 
 		boosted_T3_defense: new CreepSetup(Roles.melee, {
-			pattern  : [TOUGH, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, MOVE, MOVE],
+			pattern  : [TOUGH, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, MOVE, MOVE],
 			sizeLimit: Infinity,
 		}),
 
 		boosted_T3: new CreepSetup(Roles.melee, {
-			pattern  : [TOUGH, TOUGH, ATTACK, ATTACK, ATTACK, ATTACK, MOVE, MOVE],
+			pattern  : [TOUGH, TOUGH, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, MOVE, MOVE],
 			sizeLimit: Infinity,
 		}),
 
@@ -201,15 +220,35 @@ export const CombatSetups = {
 
 	},
 
+	/**
+	 * Hydralisks are ranged creeps which may have a small amount of healing
+	 */
 	hydralisks: {
 
+		early: new CreepSetup(Roles.ranged, {
+			pattern  : [RANGED_ATTACK, MOVE],
+			sizeLimit: Infinity,
+		}),
+
 		default: new CreepSetup(Roles.ranged, {
-			pattern  : [RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, HEAL, MOVE, MOVE, MOVE, MOVE],
+			pattern  : [RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, MOVE, MOVE, MOVE, MOVE, HEAL],
 			sizeLimit: Infinity,
 		}),
 
 		boosted_T3: new CreepSetup(Roles.ranged, {
-			pattern  : [TOUGH, RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, HEAL, MOVE, MOVE],
+			pattern  : [TOUGH, TOUGH, RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK,
+						MOVE, MOVE, HEAL],
+			sizeLimit: Infinity,
+		}),
+
+		siege: new CreepSetup(Roles.ranged, {
+			pattern  : [RANGED_ATTACK, RANGED_ATTACK, MOVE, MOVE, MOVE, MOVE, HEAL, HEAL],
+			sizeLimit: Infinity,
+		}),
+
+		siege_T3: new CreepSetup(Roles.ranged, {
+			pattern  : [TOUGH, TOUGH, RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK,
+						MOVE, MOVE, HEAL, HEAL],
 			sizeLimit: Infinity,
 		}),
 
@@ -220,6 +259,9 @@ export const CombatSetups = {
 
 	},
 
+	/**
+	 * Healers (transfusers) are creeps which only do healing
+	 */
 	healers: {
 
 		default: new CreepSetup(Roles.healer, {
@@ -233,54 +275,61 @@ export const CombatSetups = {
 		}),
 
 		boosted_T3: new CreepSetup(Roles.healer, {
-			pattern  : [TOUGH, TOUGH, HEAL, HEAL, HEAL, HEAL, MOVE, MOVE],
+			pattern  : [TOUGH, TOUGH, HEAL, HEAL, HEAL, HEAL, HEAL, HEAL, MOVE, MOVE],
 			sizeLimit: Infinity,
 		}),
 
 	},
 
+	/**
+	 * Broodlings are primarily melee creeps which may have a small amount of healing
+	 */
 	broodlings: {
-
-		default: new CreepSetup(Roles.guardMelee, {
-			pattern  : [TOUGH, ATTACK, ATTACK, ATTACK, MOVE, MOVE, MOVE, MOVE, MOVE, HEAL],
-			sizeLimit: Infinity,
-		}),
 
 		early: new CreepSetup(Roles.guardMelee, {
 			pattern  : [ATTACK, MOVE],
 			sizeLimit: Infinity,
 		}),
 
-	},
-
-	mutalisks: {
-
-		default: new CreepSetup(Roles.guardRanged, {
-			pattern  : [RANGED_ATTACK, RANGED_ATTACK, RANGED_ATTACK, MOVE, MOVE, MOVE, MOVE, HEAL],
-			sizeLimit: Infinity,
-		}),
-
-		early: new CreepSetup(Roles.guardRanged, {
-			pattern  : [RANGED_ATTACK, MOVE],
-			sizeLimit: Infinity,
-		}),
-
-	},
-
-	guards: {
-
-		melee: new CreepSetup(Roles.guardMelee, {
+		default: new CreepSetup(Roles.guardMelee, {
 			pattern  : [TOUGH, ATTACK, ATTACK, ATTACK, MOVE, MOVE, MOVE, MOVE, MOVE, HEAL],
-			sizeLimit: 3,
+			sizeLimit: Infinity,
 		}),
 
-		melee_early: new CreepSetup(Roles.guardMelee, {
+	},
+
+	/**
+	 * Pure melee raw power creeps that should never leave the bunker. These are the final guards for a room
+	 */
+	bunkerGuard: {
+
+		early: new CreepSetup(Roles.bunkerGuard, {
 			pattern  : [ATTACK, MOVE],
 			sizeLimit: Infinity,
 		}),
 
+		default: new CreepSetup(Roles.bunkerGuard, {
+			pattern  : [ATTACK, ATTACK, MOVE],
+			sizeLimit: Infinity,
+		}),
+
+		halfMove: new CreepSetup(Roles.bunkerGuard, {
+			pattern  : [ATTACK, ATTACK, ATTACK, ATTACK, MOVE],
+			sizeLimit: Infinity,
+		}),
+
+		boosted_T3: new CreepSetup(Roles.bunkerGuard, {
+			// 22 ATTACK, 3 MOVE times 2
+			pattern  : [ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK,
+				ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, ATTACK, MOVE, MOVE, MOVE],
+			sizeLimit: Infinity,
+		}),
+
 	},
 
+	/**
+	 * Dismantlers (lurkers) are creeps with work parts for dismantle sieges
+	 */
 	dismantlers: {
 
 		default: new CreepSetup(Roles.dismantler, {
@@ -294,7 +343,7 @@ export const CombatSetups = {
 		}),
 
 		boosted_T3: new CreepSetup(Roles.dismantler, {
-			pattern  : [TOUGH, TOUGH, WORK, WORK, WORK, WORK, MOVE, MOVE],
+			pattern  : [TOUGH, TOUGH, WORK, WORK, WORK, WORK, WORK, WORK, MOVE, MOVE],
 			sizeLimit: Infinity,
 		}),
 

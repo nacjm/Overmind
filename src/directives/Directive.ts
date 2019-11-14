@@ -1,17 +1,24 @@
-import {log} from '../console/log';
-import {profile} from '../profiler/decorator';
 import {Colony, getAllColonies} from '../Colony';
-import {Overlord} from '../overlords/Overlord';
+import {log} from '../console/log';
 import {Pathing} from '../movement/Pathing';
-import {equalXYR, randomHex} from '../utilities/utils';
+import {Overlord} from '../overlords/Overlord';
+import {profile} from '../profiler/decorator';
+import {equalXYR, getPosFromString, randomHex} from '../utilities/utils';
 import {NotifierPriority} from './Notifier';
 
-interface DirectiveCreateOptions {
+interface DirectiveCreationOptions {
 	memory?: FlagMemory;
 	name?: string;
 	quiet?: boolean;
 }
 
+const DEFAULT_MAX_PATH_LENGTH = 600;
+const DEFAULT_MAX_LINEAR_RANGE = 10;
+
+/**
+ * Directives are contextual wrappers for flags and serve as attachment points for Overlords, acting as a sort of
+ * "process table" for the bot, with individual processes (Overlords) run by the scheulder (Overseer)
+ */
 @profile
 export abstract class Directive {
 
@@ -19,18 +26,17 @@ export abstract class Directive {
 	static color: ColorConstant; 				// Flag color
 	static secondaryColor: ColorConstant;		// Flag secondaryColor
 
-	// flag: Flag;									// The flag instantiating this directive
 	name: string;								// The name of the flag
 	ref: string;								// Also the name of the flag; used for task targeting
-	requiredRCL: number; 						// Required RCL for a colony to handle this directive
 	colony: Colony; 							// The colony of the directive (directive is removed if undefined)
+	colonyFilter?: (colony: Colony) => boolean; // Requirements to assign to a colony
 	pos: RoomPosition; 							// Flag position
 	room: Room | undefined;						// Flag room
 	memory: FlagMemory;							// Flag memory
 	overlords: { [name: string]: Overlord };	// Overlords
+	waypoints?: RoomPosition[];					// List of portals to travel through to reach destination
 
-	constructor(flag: Flag, requiredRCL = 1, maxPathLength = 550) {
-		// this.flag = flag;
+	constructor(flag: Flag, colonyFilter?: (colony: Colony) => boolean) {
 		this.memory = flag.memory;
 		if (this.memory.suspendUntil) {
 			if (Game.time < this.memory.suspendUntil) {
@@ -41,34 +47,59 @@ export abstract class Directive {
 		}
 		this.name = flag.name;
 		this.ref = flag.ref;
-		this.requiredRCL = requiredRCL;
-		if (!this.memory.created) this.memory.created = Game.time;
+		if (!this.memory[_MEM.TICK]) {
+			this.memory[_MEM.TICK] = Game.time;
+		}
+		if (this.memory.waypoints) {
+			this.waypoints = _.map(this.memory.waypoints, posName => getPosFromString(posName)!);
+		}
 		// Relocate flag if needed; this must be called before the colony calculations
 		const needsRelocating = this.handleRelocation();
 		if (!needsRelocating) {
 			this.pos = flag.pos;
 			this.room = flag.room;
 		}
-		const colony = this.getColony(requiredRCL);
+		const colony = this.getColony(colonyFilter);
 		// Delete the directive if the colony is dead
 		if (!colony) {
 			if (Overmind.exceptions.length == 0) {
-				log.alert(`Could not get colony for directive ${this.name}; removing flag!`);
+				log.alert(`Could not get colony for directive ${this.print}; removing flag!`);
 				flag.remove();
 			} else {
-				log.alert(`Could not get colony for directive ${this.name}; ` +
+				log.alert(`Could not get colony for directive ${this.print}; ` +
 						  `exceptions present this tick, so won't remove`);
 			}
 			return;
 		}
+		// Delete the directive if expired
+		if (this.memory[_MEM.EXPIRATION] && Game.time > this.memory[_MEM.EXPIRATION]!) {
+			log.alert(`Removing expired directive ${this.print}!`);
+			flag.remove();
+			return;
+		}
+		// Register colony and add flags to colony.flags
 		this.colony = colony;
 		this.colony.flags.push(flag);
 		this.overlords = {};
 		// Register directive on Overmind
-		Overmind.directives[this.name] = this;
+		global[this.name] = this;
 		Overmind.overseer.registerDirective(this);
+		Overmind.directives[this.name] = this;
 	}
 
+	/**
+	 * Gets an effective room position for a directive; allows you to reference this.pos in constructor super() without
+	 * throwing an error
+	 */
+	static getPos(flag: Flag): RoomPosition {
+		if (flag.memory && flag.memory.setPosition) {
+			const pos = derefRoomPosition(flag.memory.setPosition);
+			return pos;
+		}
+		return flag.pos;
+	}
+
+	// Flag must be a getter to avoid caching issues
 	get flag(): Flag {
 		return Game.flags[this.name];
 	}
@@ -107,9 +138,9 @@ export abstract class Directive {
 
 	private handleRelocation(): boolean {
 		if (this.memory.setPosition) {
-			let pos = derefRoomPosition(this.memory.setPosition);
+			const pos = derefRoomPosition(this.memory.setPosition);
 			if (!this.flag.pos.isEqualTo(pos)) {
-				let result = this.flag.setPosition(pos);
+				const result = this.flag.setPosition(pos);
 				if (result == OK) {
 					log.debug(`Moving ${this.name} from ${this.flag.pos.print} to ${pos.print}.`);
 				} else {
@@ -125,60 +156,54 @@ export abstract class Directive {
 		return false;
 	}
 
-	private getColony(requiredRCL = 1): Colony | undefined {
+	private getColony(colonyFilter?: (colony: Colony) => boolean, verbose = false): Colony | undefined {
 		// If something is written to flag.colony, use that as the colony
-		if (this.memory.colony) {
-			return Overmind.colonies[this.memory.colony];
+		if (this.memory[_MEM.COLONY]) {
+			return Overmind.colonies[this.memory[_MEM.COLONY]!];
 		} else {
 			// If flag contains a colony name as a substring, assign to that colony, regardless of RCL
-			let colonyNames = _.keys(Overmind.colonies);
-			for (let name of colonyNames) {
+			const colonyNames = _.keys(Overmind.colonies);
+			for (const name of colonyNames) {
 				if (this.name.includes(name)) {
 					if (this.name.split(name)[1] != '') continue; // in case of other substring, e.g. E11S12 and E11S1
-					this.memory.colony = name;
+					this.memory[_MEM.COLONY] = name;
 					return Overmind.colonies[name];
 				}
 			}
 			// If flag is in a room belonging to a colony and the colony has sufficient RCL, assign to there
-			let colony = Overmind.colonies[Overmind.colonyMap[this.pos.roomName]] as Colony | undefined;
-			if (colony && colony.level >= requiredRCL) {
-				this.memory.colony = colony.name;
-				return colony;
-			} else {
-				// Otherwise assign to closest colony
-				let nearestColony = this.findNearestColony(requiredRCL);
-				if (nearestColony) {
-					log.info(`Colony ${nearestColony.room.print} assigned to ${this.name}.`);
-					this.memory.colony = nearestColony.room.name;
-					return nearestColony;
-				} else {
-					log.error(`Could not find colony match for ${this.name} in ${this.pos.roomName}!` +
-							  `Try setting memory.maxPathLength and memory.maxLinearRange.`);
+			const colony = Overmind.colonies[Overmind.colonyMap[this.pos.roomName]] as Colony | undefined;
+			if (colony) {
+				if (!colonyFilter || colonyFilter(colony)) {
+					this.memory[_MEM.COLONY] = colony.name;
+					return colony;
 				}
+			}
+			// Otherwise assign to closest colony
+			const nearestColony = this.findNearestColony(colonyFilter, verbose);
+			if (nearestColony) {
+				log.info(`Colony ${nearestColony.room.print} assigned to ${this.name}.`);
+				this.memory[_MEM.COLONY] = nearestColony.room.name;
+				return nearestColony;
+			} else {
+				log.error(`Could not find colony match for ${this.name} in ${this.pos.roomName}! ` +
+						  `Try setting memory.maxPathLength and memory.maxLinearRange.`);
 			}
 		}
 	}
 
-	private findNearestColony(requiredRCL    = 1,
-							  maxPathLength  = 550,
-							  maxLinearRange = 10,
-							  verbose        = false): Colony | undefined {
-		if (this.memory.maxPathLength) {
-			maxPathLength = this.memory.maxPathLength;
-		}
-		if (this.memory.maxLinearRange) {
-			maxLinearRange = this.memory.maxLinearRange;
-		}
+	private findNearestColony(colonyFilter?: (colony: Colony) => boolean, verbose = false): Colony | undefined {
+		const maxPathLength = this.memory.maxPathLength || DEFAULT_MAX_PATH_LENGTH;
+		const maxLinearRange = this.memory.maxLinearRange || DEFAULT_MAX_LINEAR_RANGE;
 		if (verbose) log.info(`Recalculating colony association for ${this.name} in ${this.pos.roomName}`);
-		let nearestColony: Colony | undefined = undefined;
+		let nearestColony: Colony | undefined;
 		let minDistance = Infinity;
-		let colonyRooms = _.filter(Game.rooms, room => room.my);
-		for (let colony of getAllColonies()) {
+		const colonyRooms = _.filter(Game.rooms, room => room.my);
+		for (const colony of getAllColonies()) {
 			if (Game.map.getRoomLinearDistance(this.pos.roomName, colony.name) > maxLinearRange) {
 				continue;
 			}
-			if (colony.level >= requiredRCL) {
-				let ret = Pathing.findPath((colony.hatchery || colony).pos, this.pos);
+			if (!colonyFilter || colonyFilter(colony)) {
+				const ret = Pathing.findPath((colony.hatchery || colony).pos, this.pos);
 				if (!ret.incomplete) {
 					if (ret.path.length < maxPathLength && ret.path.length < minDistance) {
 						nearestColony = colony;
@@ -188,12 +213,7 @@ export abstract class Directive {
 				} else {
 					if (verbose) log.info(`Incomplete path from ${colony.room.print}`);
 				}
-			} else {
-				if (verbose) {
-					log.info(`RCL for ${colony.room.print} insufficient: needs ${requiredRCL}, is ${colony.level}`);
-				}
 			}
-
 		}
 		if (nearestColony) {
 			return nearestColony;
@@ -204,6 +224,7 @@ export abstract class Directive {
 	remove(force = false): number | undefined {
 		if (!this.memory.persistent || force) {
 			delete Overmind.directives[this.name];
+			delete global[this];
 			Overmind.overseer.removeDirective(this);
 			if (this.colony) {
 				_.remove(this.colony.flags, flag => flag.name == this.name);
@@ -230,7 +251,7 @@ export abstract class Directive {
 	// Custom directive methods ========================================================================================
 
 	/* Create an appropriate flag to instantiate this directive in the next tick */
-	static create(pos: RoomPosition, opts: DirectiveCreateOptions = {}): number | string {
+	static create(pos: RoomPosition, opts: DirectiveCreationOptions = {}): number | string {
 		let flagName = opts.name || undefined;
 		if (!flagName) {
 			flagName = this.directiveName + ':' + randomHex(6);
@@ -241,7 +262,7 @@ export abstract class Directive {
 		if (!opts.quiet) {
 			log.alert(`Creating ${this.directiveName} directive at ${pos.print}!`);
 		}
-		let result = pos.createFlag(flagName, this.color, this.secondaryColor) as string | number;
+		const result = pos.createFlag(flagName, this.color, this.secondaryColor) as string | number;
 		if (result == flagName && opts.memory) {
 			Memory.flags[flagName] = opts.memory;
 		}
@@ -261,7 +282,7 @@ export abstract class Directive {
 											!(flag.memory.setPosition
 											&& flag.memory.setPosition.roomName != pos.roomName)).length > 0;
 				} else {
-					let flagsInRoom = _.filter(Game.flags, function (flag) {
+					const flagsInRoom = _.filter(Game.flags, function(flag) {
 						if (flag.memory.setPosition) { // does it need to be relocated?
 							return flag.memory.setPosition.roomName == pos.roomName;
 						} else { // properly located
@@ -277,7 +298,7 @@ export abstract class Directive {
 											!(flag.memory.setPosition
 											&& !equalXYR(pos, flag.memory.setPosition))).length > 0;
 				} else {
-					let flagsAtPos = _.filter(Game.flags, function (flag) {
+					const flagsAtPos = _.filter(Game.flags, function(flag) {
 						if (flag.memory.setPosition) { // does it need to be relocated?
 							return equalXYR(flag.memory.setPosition, pos);
 						} else { // properly located
@@ -292,18 +313,17 @@ export abstract class Directive {
 	/* Create a directive if one of the same type is not already present (in room | at position).
 	 * Calling this method on positions in invisible rooms can be expensive and should be used sparingly. */
 	static createIfNotPresent(pos: RoomPosition, scope: 'room' | 'pos',
-							  opts: DirectiveCreateOptions = {}): number | string | undefined {
+							  opts: DirectiveCreationOptions = {}): number | string | undefined {
 		if (this.isPresent(pos, scope)) {
 			return; // do nothing if flag is already here
 		}
-		let room = Game.rooms[pos.roomName] as Room | undefined;
+		const room = Game.rooms[pos.roomName] as Room | undefined;
 		if (!room) {
 			if (!opts.memory) {
 				opts.memory = {};
 			}
 			opts.memory.setPosition = pos;
 		}
-		let flagsOfThisType: Flag[];
 		switch (scope) {
 			case 'room':
 				if (room) {
@@ -312,8 +332,8 @@ export abstract class Directive {
 					log.info(`Creating directive at ${pos.print}... ` +
 							 `No visibility in room; directive will be relocated on next tick.`);
 					let createAtPos: RoomPosition;
-					if (opts.memory && opts.memory.colony) {
-						createAtPos = Pathing.findPathablePosition(opts.memory.colony);
+					if (opts.memory && opts.memory[_MEM.COLONY]) {
+						createAtPos = Pathing.findPathablePosition(opts.memory[_MEM.COLONY]!);
 					} else {
 						createAtPos = Pathing.findPathablePosition(_.first(getAllColonies()).room.name);
 					}
@@ -326,8 +346,8 @@ export abstract class Directive {
 					log.info(`Creating directive at ${pos.print}... ` +
 							 `No visibility in room; directive will be relocated on next tick.`);
 					let createAtPos: RoomPosition;
-					if (opts.memory && opts.memory.colony) {
-						createAtPos = Pathing.findPathablePosition(opts.memory.colony);
+					if (opts.memory && opts.memory[_MEM.COLONY]) {
+						createAtPos = Pathing.findPathablePosition(opts.memory[_MEM.COLONY]!);
 					} else {
 						createAtPos = Pathing.findPathablePosition(_.first(getAllColonies()).room.name);
 					}

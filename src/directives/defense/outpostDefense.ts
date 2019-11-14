@@ -1,6 +1,6 @@
-import {Directive} from '../Directive';
-import {profile} from '../../profiler/decorator';
 import {OutpostDefenseOverlord} from '../../overlords/defense/outpostDefense';
+import {profile} from '../../profiler/decorator';
+import {Directive} from '../Directive';
 import {NotifierPriority} from '../Notifier';
 
 interface DirectiveInvasionDefenseMemory extends FlagMemory {
@@ -9,19 +9,21 @@ interface DirectiveInvasionDefenseMemory extends FlagMemory {
 	safeSince: number;
 }
 
+/**
+ * Defend an outpost against an incoming player invasion
+ */
 @profile
 export class DirectiveOutpostDefense extends Directive {
 
 	static directiveName = 'outpostDefense';
 	static color = COLOR_BLUE;
 	static secondaryColor = COLOR_RED;
-	static requiredRCL = 1;
 
 	memory: DirectiveInvasionDefenseMemory;
 	room: Room | undefined;
 
 	constructor(flag: Flag) {
-		super(flag, DirectiveOutpostDefense.requiredRCL);
+		super(flag);
 	}
 
 	spawnMoarOverlords() {
@@ -29,7 +31,7 @@ export class DirectiveOutpostDefense extends Directive {
 	}
 
 	init(): void {
-		let numHostiles: string = this.room ? this.room.hostiles.length.toString() : '???';
+		const numHostiles: string = this.room ? this.room.hostiles.length.toString() : '???';
 		this.alert(`Outpost defense (hostiles: ${numHostiles})`, NotifierPriority.High);
 	}
 

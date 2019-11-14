@@ -4,6 +4,9 @@ import {getCacheExpiration} from '../utilities/utils';
 const CACHE_TIMEOUT = 50;
 const SHORT_CACHE_TIMEOUT = 10;
 
+/**
+ * The GlobalCache ($) module saves frequently accessed deserialized objects in temporary, volatile global memory
+ */
 @profile
 export class $ { // $ = cash = cache... get it? :D
 
@@ -71,7 +74,7 @@ export class $ { // $ = cash = cache... get it? :D
 	}
 
 	static costMatrixRecall(roomName: string, key: string): CostMatrix | undefined {
-		let cacheKey = roomName + ':' + key;
+		const cacheKey = roomName + ':' + key;
 		return _cache.costMatrices[cacheKey];
 	}
 
@@ -99,7 +102,7 @@ export class $ { // $ = cash = cache... get it? :D
 	}
 
 	static refresh<T extends Record<K, undefined | HasID | HasID[]>, K extends string>(thing: T, ...keys: K[]): void {
-		_.forEach(keys, function (key) {
+		_.forEach(keys, function(key) {
 			if (thing[key]) {
 				if (_.isArray(thing[key])) {
 					thing[key] = _.compact(_.map(thing[key] as HasID[], s => Game.getObjectById(s.id))) as T[K];
@@ -112,9 +115,9 @@ export class $ { // $ = cash = cache... get it? :D
 
 	static refreshObject<T extends Record<K, { [prop: string]: undefined | HasID | HasID[] }>,
 		K extends string>(thing: T, ...keys: K[]): void {
-		_.forEach(keys, function (key) {
+		_.forEach(keys, function(key) {
 			if (_.isObject(thing[key])) {
-				for (let prop in thing[key]) {
+				for (const prop in thing[key]) {
 					if (_.isArray(thing[key][prop])) {
 						thing[key][prop] = _.compact(_.map(thing[key][prop] as HasID[],
 														   s => Game.getObjectById(s.id))) as HasID[];

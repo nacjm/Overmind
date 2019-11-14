@@ -1,18 +1,18 @@
-// This is the movement library for Overmind. It was originally based on BonzAI's Traveler library, but it has been
-// extensively modified to integrate more tightly with the Overmind framework and add additional functionality.
-
-import {profile} from '../profiler/decorator';
 import {log} from '../console/log';
-import {getTerrainCosts, isExit, normalizePos, sameCoord} from './helpers';
-import {normalizeZerg, Zerg} from '../zerg/Zerg';
-import {Pathing} from './Pathing';
-import {insideBunkerBounds} from '../roomPlanner/layouts/bunker';
-import {isZerg} from '../declarations/typeGuards';
-import {rightArrow} from '../utilities/stringConstants';
 import {Roles} from '../creepSetups/setups';
+import {isZerg} from '../declarations/typeGuards';
+import {profile} from '../profiler/decorator';
+import {insideBunkerBounds} from '../roomPlanner/layouts/bunker';
+import {rightArrow} from '../utilities/stringConstants';
+import {getPosFromString} from '../utilities/utils';
+import {Visualizer} from '../visuals/Visualizer';
 import {Swarm} from '../zerg/Swarm';
+import {normalizeZerg, Zerg} from '../zerg/Zerg';
+import {getTerrainCosts, isExit, normalizePos, sameCoord} from './helpers';
+import {Pathing} from './Pathing';
 
 export const NO_ACTION = -20;
+export const CROSSING_PORTAL = -21;
 export const ERR_CANNOT_PUSH_CREEP = -30;
 
 const REPORT_CPU_THRESHOLD = 1000; 	// Report when creep uses more than this amount of CPU over lifetime
@@ -27,17 +27,20 @@ const STATE_CPU = 3;
 const STATE_DEST_X = 4;
 const STATE_DEST_Y = 5;
 const STATE_DEST_ROOMNAME = 6;
+const STATE_CURRENT_X = 7;
+const STATE_CURRENT_Y = 8;
 
 export const MovePriorities = {
-	[Roles.manager]    : 1,
-	[Roles.queen]      : 2,
-	[Roles.melee]      : 3,
-	[Roles.ranged]     : 4,
-	[Roles.guardMelee] : 5,
-	[Roles.guardRanged]: 6,
-	[Roles.transport]  : 8,
-	[Roles.worker]     : 9,
-	default            : 10,
+	[Roles.manager]   : 1,
+	[Roles.queen]     : 2,
+	[Roles.bunkerGuard]: 3,
+	[Roles.melee]     : 3,
+	[Roles.ranged]    : 4,
+	[Roles.guardMelee]: 5,
+	// [Roles.ranged]: 6,
+	[Roles.transport] : 8,
+	[Roles.worker]    : 9,
+	default           : 10,
 };
 
 
@@ -49,6 +52,7 @@ export interface MoveOptions {
 	};											//
 	force?: boolean;							// whether to ignore Zerg.blockMovement
 	ignoreCreeps?: boolean;						// ignore pathing around creeps
+	ignoreCreepsOnDestination?: boolean; 		// ignore creeps currently standing on the destination
 	ignoreStructures?: boolean;					// ignore pathing around structures
 	preferHighway?: boolean;					// prefer alley-type rooms
 	allowHostile?: boolean;						// allow to path through hostile rooms; origin/destination room excluded
@@ -63,10 +67,12 @@ export interface MoveOptions {
 	stuckValue?: number;						// creep is marked stuck after this many idle ticks
 	maxRooms?: number;							// maximum number of rooms to path through
 	repath?: number;							// probability of repathing on a given tick
+	repathOnceVisible?: boolean;				// repath after gaining visibility to a previously invisible room
 	route?: { [roomName: string]: boolean };	// lookup table for allowable pathing rooms
 	ensurePath?: boolean;						// can be useful if route keeps being found as incomplete
 	noPush?: boolean;							// whether to ignore pushing behavior
-	modifyRoomCallback?: (r: Room, m: CostMatrix) => CostMatrix // modifications to default cost matrix calculations
+	modifyRoomCallback?: (r: Room, m: CostMatrix) => CostMatrix; // modifications to default cost matrix calculations
+	waypoints?: RoomPosition[];					// list of waypoints to visit on the way to target
 }
 
 export interface SwarmMoveOptions {
@@ -74,22 +80,22 @@ export interface SwarmMoveOptions {
 	ensureSingleRoom?: boolean;
 	ignoreCreeps?: boolean;						// ignore pathing around creeps
 	ignoreStructures?: boolean;					// ignore pathing around structures
-	// restrictDistance?: number;					// restrict the distance of route to this number of rooms
 	exitCost?: number;
-	// useFindRoute?: boolean;						// whether to use the route finder; determined automatically otherwise
 	maxOps?: number;							// pathfinding times out after this many operations
 	stuckValue?: number;						// creep is marked stuck after this many idle ticks
 	maxRooms?: number;							// maximum number of rooms to path through
 	repath?: number;							// probability of repathing on a given tick
-	// route?: { [roomName: string]: boolean };	// lookup table for allowable pathing rooms
-	// ensurePath?: boolean;						// can be useful if route keeps being found as incomplete
+	displayCostMatrix?: boolean;
 }
 
 export interface CombatMoveOptions {
-	allowExit?: boolean,
-	avoidPenalty?: number,
-	approachBonus?: number,
-	preferRamparts?: boolean,
+	allowExit?: boolean;
+	avoidPenalty?: number;
+	approachBonus?: number;
+	preferRamparts?: boolean;
+	requireRamparts?: boolean;
+	displayCostMatrix?: boolean;
+	displayAvoid?: boolean;
 }
 
 export interface MoveState {
@@ -97,15 +103,22 @@ export interface MoveState {
 	lastCoord: Coord;
 	destination: RoomPosition;
 	cpu: number;
+	currentXY?: Coord;
 }
 
 
+/**
+ * This is the movement library for Overmind. It was originally based on BonzAI's Traveler library, but it has been
+ * extensively modified to integrate more tightly with the Overmind framework and add additional functionality.
+ */
 @profile
 export class Movement {
 
 	// Core creep movement functions ===================================================================================
 
-	/* Move a creep to a destination */
+	/**
+	 * Move a creep to a destination
+	 */
 	static goTo(creep: Zerg, destination: HasPos | RoomPosition, options: MoveOptions = {}): number {
 
 		if (creep.blockMovement && !options.force) {
@@ -121,33 +134,54 @@ export class Movement {
 
 		// Set default options
 		_.defaults(options, {
-			ignoreCreeps: true,
+			ignoreCreeps     : true,
+			repathOnceVisible: !!options.waypoints || !!options.avoidSK,
 		});
-
-		destination = normalizePos(destination);
-		Pathing.updateRoomStatus(creep.room);
-
-		// Fixes bug that causes creeps to idle on the other side of a room
-		let distanceToEdge = _.min([destination.x, 49 - destination.x, destination.y, 49 - destination.y]);
-		if (options.range != undefined && distanceToEdge <= options.range) {
-			options.range = Math.min(Math.abs(distanceToEdge - 1), 0);
-		}
 
 		// initialize data object
 		if (!creep.memory._go) {
 			creep.memory._go = {} as MoveData;
 		}
-		let moveData = creep.memory._go as MoveData;
+		const moveData = creep.memory._go as MoveData;
+
+		// set destination according to waypoint specifications; finalDestination is the true destination
+		destination = normalizePos(destination);
+		const finalDestination = destination;
+
+		if (options.waypoints) {
+			destination = this.getDestination(destination, options.waypoints, moveData);
+		}
+
+		Pathing.updateRoomStatus(creep.room);
+
+		// Fixes bug that causes creeps to idle on the other side of a room
+		if (options.range != undefined && destination.rangeToEdge <= options.range) {
+			options.range = Math.min(Math.abs(destination.rangeToEdge - 1), 0);
+		}
 
 		// manage case where creep is nearby destination
-		let rangeToDestination = creep.pos.getRangeTo(destination);
+		const rangeToDestination = creep.pos.getRangeTo(destination);
 		if (options.range != undefined && rangeToDestination <= options.range) {
-			delete creep.memory._go;
-			return NO_ACTION;
+			if (destination.isEqualTo(finalDestination)) {
+				delete creep.memory._go;
+				return NO_ACTION;
+			} else {
+				// debug
+				console.log(`Destination ${destination} not equal to final destination ${finalDestination}!`);
+				if (!moveData.waypointsVisited) {
+					moveData.waypointsVisited = [];
+				}
+				moveData.waypointsVisited.push(destination.name);
+
+				// call goTo again to path to the final destination
+				return this.goTo(creep, finalDestination, options);
+			}
+
 		} else if (rangeToDestination <= 1) {
+			// move onto destination
 			if (rangeToDestination == 1 && !options.range) {
-				let direction = creep.pos.getDirectionTo(destination);
-				if (destination.isWalkable()) {
+				const direction = creep.pos.getDirectionTo(destination);
+				if (destination.isWalkable(options.ignoreCreepsOnDestination)) {
 					return creep.move(direction, !!options.force);
 				}
 			} else { // at destination
@@ -155,6 +189,16 @@ export class Movement {
 					delete creep.memory._go;
 				}
 				return NO_ACTION;
+			}
+		}
+
+		// traverse through a portal waypoint or check that has just been traversed
+		if (options.waypoints && !destination.isEqualTo(finalDestination)) {
+			const portalTraversed = this.traversePortalWaypoint(creep, destination);
+			if (portalTraversed) {
+				return this.goTo(creep, finalDestination, options);
+			} else {
+				return CROSSING_PORTAL;
 			}
 		}
 
@@ -168,7 +212,16 @@ export class Movement {
 			}
 		}
 
-		let state = this.deserializeState(moveData, destination);
+		const state = this.deserializeState(moveData, destination);
+
+		// // verify creep is in the location it thinks it should be in
+		// if (state.currentXY) {
+		// 	let {x, y} = state.currentXY;
+		// 	if (!(creep.pos.x == x && creep.pos.y == y)) { // creep thought it would move last tick but didn't
+		// 		log.debug(`${creep.print} has gotten off track; deleting path!`);
+		// 		delete moveData.path;
+		// 	}
+		// }
 
 		// uncomment to visualize destination
 		// this.circle(destination, "orange");
@@ -201,13 +254,23 @@ export class Movement {
 			}
 		}
 
-		if (options.repath && Math.random() < options.repath) {	// randomly repath with specified probability
+
+		// randomly repath with specified probability
+		if (options.repath && Math.random() < options.repath) {
 			delete moveData.path;
 		}
 
+		// repath if there was no vision for this room when pathfinding was run
+		if (options.repathOnceVisible && !(moveData.roomVisibility || {})[creep.room.name]) {
+			delete moveData.path;
+		}
+
+		// TODO: repath if you are not on expected next position
+
+
 		// pathfinding
 		let newPath = false;
-		if (!moveData.path) {
+		if (!moveData.path || moveData.path.length == 0) {
 			newPath = true;
 			if (creep.spawning) {
 				return ERR_BUSY;
@@ -217,10 +280,10 @@ export class Movement {
 			if (!options.direct && !options.terrainCosts) {
 				options.terrainCosts = getTerrainCosts(creep.creep);
 			}
-			let cpu = Game.cpu.getUsed();
+			const cpu = Game.cpu.getUsed();
 			// (!) Pathfinding is done here
-			let ret = Pathing.findPath(creep.pos, destination, options);
-			let cpuUsed = Game.cpu.getUsed() - cpu;
+			const ret = Pathing.findPath(creep.pos, destination, options);
+			const cpuUsed = Game.cpu.getUsed() - cpu;
 			state.cpu = _.round(cpuUsed + state.cpu);
 			if (Game.time % 10 == 0 && state.cpu > REPORT_CPU_THRESHOLD) {
 				log.alert(`Movement: heavy cpu use: ${creep.name}, cpu: ${state.cpu}. ` +
@@ -235,21 +298,32 @@ export class Movement {
 			}
 			this.circle(creep.pos, color);
 			moveData.path = Pathing.serializePath(creep.pos, ret.path, color);
+
+			const roomsVisited = _.unique(_.map(ret.path, pos => pos.roomName));
+			if (!moveData.roomVisibility) {
+				moveData.roomVisibility = {};
+			}
+			for (const roomName of roomsVisited) {
+				moveData.roomVisibility[roomName] = !!Game.rooms[roomName];
+			}
 			state.stuckCount = 0;
+
 		}
 
-		this.serializeState(creep, destination, state, moveData);
-
 		if (!moveData.path || moveData.path.length == 0) {
+			this.serializeState(creep, destination, state, moveData);
 			return ERR_NO_PATH;
 		}
 
 		// push creeps out of the way if needed
 		if (!options.noPush) {
-			let obstructingCreep = this.findBlockingCreep(creep);
+			const obstructingCreep = this.findBlockingCreep(creep);
 			if (obstructingCreep && this.shouldPush(creep, obstructingCreep)) {
-				let pushedCreep = this.pushCreep(creep, obstructingCreep);
-				if (!pushedCreep) return ERR_CANNOT_PUSH_CREEP;
+				const pushedCreep = this.pushCreep(creep, obstructingCreep);
+				if (!pushedCreep) {
+					this.serializeState(creep, destination, state, moveData);
+					return ERR_CANNOT_PUSH_CREEP;
+				}
 			}
 		}
 
@@ -257,12 +331,97 @@ export class Movement {
 		if (state.stuckCount == 0 && !newPath) {
 			moveData.path = moveData.path.substr(1);
 		}
-		let nextDirection = parseInt(moveData.path[0], 10) as DirectionConstant;
+		const nextDirection = parseInt(moveData.path[0], 10) as DirectionConstant;
+
+		// predict next coordinate (for verification)
+		const nextPos = creep.pos.getPositionAtDirection(nextDirection);
+
+		this.serializeState(creep, destination, state, moveData, {x: nextPos.x, y: nextPos.y});
 
 		return creep.move(nextDirection, !!options.force);
 	}
 
-	static getPushPriority(creep: Creep | Zerg): number {
+	/**
+	 * Gets the effective destination based on the waypoints to travel over and the creep.memory._go object.
+	 * Finds the next waypoint which has not been marked as visited in moveData.
+	 */
+	private static getDestination(destination: RoomPosition, waypoints: RoomPosition[],
+								  moveData: MoveData): RoomPosition {
+
+		const waypointsVisited = _.compact(_.map(moveData.waypointsVisited || [],
+												 posName => getPosFromString(posName))) as RoomPosition[];
+		const nextWaypoint = _.find(waypoints, waypoint => !_.any(waypointsVisited,
+																  visited => waypoint.isEqualTo(visited)));
+
+		if (nextWaypoint) {
+			return nextWaypoint;
+		} else {
+			return destination;
+		}
+
+	}
+
+	/**
+	 * Navigate a creep through a portal
+	 */
+	private static traversePortalWaypoint(creep: Zerg, portalPos: RoomPosition): boolean {
+
+		if (creep.pos.roomName == portalPos.roomName && creep.pos.getRangeTo(portalPos) > 1) {
+			log.error(`Movement.travelPortalWaypoint() should only be called in range 1 of portal!`);
+		}
+
+		const moveData = creep.memory._go || {} as MoveData;
+
+		if (portalPos.room && !portalPos.lookForStructure(STRUCTURE_PORTAL)) {
+			log.error(`Portal not found at ${portalPos.print}!`);
+			return false;
+		}
+
+		moveData.portaling = true;
+		const crossed = this.crossPortal(creep, portalPos);
+
+		if (crossed) {
+			moveData.portaling = false;
+			if (!moveData.waypointsVisited) {
+				moveData.waypointsVisited = [];
+			}
+			moveData.waypointsVisited.push(portalPos.name);
+
+			return true; // done crossing portal
+		} else {
+			return false; // still trying to cross portal
+		}
+
+	}
+
+	/**
+	 * Cross a portal that is within range 1 and then step off of the exit portal. Returns true when creep is on the
+	 * other side of the portal and no longer standing on a portal.
+	 */
+	private static crossPortal(creep: Zerg, portalPos: RoomPosition): boolean {
+		if (Game.map.getRoomLinearDistance(creep.pos.roomName, portalPos.roomName) > 5) {
+			// if you're on the other side of the portal
+			const creepOnPortal = !!creep.pos.lookForStructure(STRUCTURE_PORTAL);
+			if (!creepOnPortal) {
+				return true;
+			} else {
+				creep.moveOffCurrentPos();
+				return false;
+			}
+			// console.log(agent.name + " waiting on other side");
+		} else {
+			if (creep.pos.getRangeTo(portalPos) > 1) {
+				log.error(`Movement.crossPortal() should only be called in range 1 of portal!`);
+			} else {
+				const dir = creep.pos.getDirectionTo(portalPos);
+				creep.move(dir);
+			}
+			// console.log(agent.name + " traveling to waypoint");
+			return false;
+		}
+	}
+
+	private static getPushPriority(creep: Creep | Zerg): number {
 		if (!creep.memory) return MovePriorities.default;
 		if (creep.memory._go && creep.memory._go.priority) {
 			return creep.memory._go.priority;
@@ -281,8 +440,8 @@ export class Movement {
 				// pushee is equal or more important than pusher
 				if (pushee.task && pushee.task.isWorking) {
 					// If creep is doing a task, only push out of way if it can go somewhere else in range
-					let targetPos = pushee.task.targetPos;
-					let targetRange = pushee.task.settings.targetRange;
+					const targetPos = pushee.task.targetPos;
+					const targetRange = pushee.task.settings.targetRange;
 					return _.filter(pushee.pos.availableNeighbors().concat(pusher.pos),
 									pos => pos.getRangeTo(targetPos) <= targetRange).length > 0;
 				} else if (!pushee.isMoving) {
@@ -297,13 +456,13 @@ export class Movement {
 	}
 
 	private static getPushDirection(pusher: Zerg | Creep, pushee: Zerg | Creep): DirectionConstant {
-		let possiblePositions = pushee.pos.availableNeighbors();
+		const possiblePositions = pushee.pos.availableNeighbors();
 		pushee = normalizeZerg(pushee);
 		if (isZerg(pushee)) {
 			let preferredPositions: RoomPosition[] = [];
 			if (pushee.task && pushee.task.isWorking) { // push creeps out of the way when they're doing task
-				let targetPos = pushee.task.targetPos;
-				let targetRange = pushee.task.settings.targetRange;
+				const targetPos = pushee.task.targetPos;
+				const targetRange = pushee.task.settings.targetRange;
 				preferredPositions = _.filter(possiblePositions, pos => pos.getRangeTo(targetPos) <= targetRange);
 			}
 			if (preferredPositions[0]) {
@@ -316,10 +475,10 @@ export class Movement {
 	}
 
 	private static findBlockingCreep(creep: Zerg): Creep | undefined {
-		let nextDir = Pathing.nextDirectionInPath(creep);
+		const nextDir = Pathing.nextDirectionInPath(creep);
 		if (nextDir == undefined) return;
 
-		let nextPos = Pathing.positionAtDirection(creep.pos, nextDir);
+		const nextPos = Pathing.positionAtDirection(creep.pos, nextDir);
 		if (!nextPos) return;
 
 		return nextPos.lookFor(LOOK_CREEPS)[0];
@@ -327,17 +486,19 @@ export class Movement {
 
 	/* Push a blocking creep out of the way */
 	static pushCreep(creep: Zerg, otherCreep: Creep | Zerg): boolean {
-
 		if (!otherCreep.memory) return false;
 		otherCreep = normalizeZerg(otherCreep);
-		let pushDirection = this.getPushDirection(creep, otherCreep);
-		let otherData = otherCreep.memory._go as MoveData | undefined;
-		let outcome = otherCreep.move(pushDirection);
+		const pushDirection = this.getPushDirection(creep, otherCreep);
+		const otherData = otherCreep.memory._go as MoveData | undefined;
+
+		// Push the creep and update the state
+		const outcome = otherCreep.move(pushDirection);
+		const otherNextPos = otherCreep.pos.getPositionAtDirection(pushDirection);
 		if (isZerg(otherCreep)) {
 			if (outcome == OK) {
 				if (otherData && otherData.path && !otherCreep.blockMovement) { // don't add to path unless you moved
 					otherData.path = Pathing.oppositeDirection(pushDirection) + otherData.path;
-					// otherData.delay = 1;
+					this.updateStateNextCoord(otherData, otherNextPos);
 				}
 				otherCreep.blockMovement = true;
 				return true;
@@ -345,11 +506,12 @@ export class Movement {
 				return false;
 			}
 		} else {
+			// Shouldn't reach here ideally
 			log.debug(`${otherCreep.name}@${otherCreep.pos.print} is not Zerg! (Why?)`);
 			if (outcome == OK) {
 				if (otherData && otherData.path) {
 					otherData.path = Pathing.oppositeDirection(pushDirection) + otherData.path;
-					// otherData.delay = 1;
+					this.updateStateNextCoord(otherData, otherNextPos);
 				}
 				return true;
 			} else {
@@ -360,20 +522,22 @@ export class Movement {
 
 
 	// TODO: this is bugged somewhere
-	/* Recursively moves creeps out of the way of a position to make room for something, such as a spawning creep.
+	/**
+	 * Recursively moves creeps out of the way of a position to make room for something, such as a spawning creep.
 	 * If suicide is specified and there is no series of move commands that can move a block of creeps out of the way,
-	 * the lead blocking creep will suicide. Returns whether the position has been vacated. */
+	 * the lead blocking creep will suicide. Returns whether the position has been vacated.
+	 */
 	static vacatePos(pos: RoomPosition, suicide = false): boolean {
 		// prevent creeps from moving onto pos
-		let nearbyCreeps = _.compact(_.map(pos.findInRange(FIND_MY_CREEPS, 2),
-										   creep => Overmind.zerg[creep.name])) as Zerg[];
+		const nearbyCreeps = _.compact(_.map(pos.findInRange(FIND_MY_CREEPS, 2),
+											 creep => Overmind.zerg[creep.name])) as Zerg[];
 		_.forEach(nearbyCreeps, creep => creep.blockMovement = true);
 		// recurively move creeps off of the position
-		let creep = pos.lookFor(LOOK_CREEPS)[0];
+		const creep = pos.lookFor(LOOK_CREEPS)[0];
 		if (!creep) return true;
-		let blockingCreep = Overmind.zerg[creep.name];
+		const blockingCreep = Overmind.zerg[creep.name];
 		if (!blockingCreep) return true;
-		let moved = !!this.recursivePush(blockingCreep);
+		const moved = !!this.recursivePush(blockingCreep);
 		if (moved) {
 			log.debug(`Moved creep ${blockingCreep.name} off of ${blockingCreep.pos.print}.`);
 			return true;
@@ -390,9 +554,11 @@ export class Movement {
 		}
 	}
 
-	/* Recursively pushes creeps out of the way of a root position. */
+	/**
+	 * Recursively pushes creeps out of the way of a root position.
+	 */
 	static recursivePush(creep: Zerg, excludePos: RoomPosition[] = []): RoomPosition | undefined {
-		let creepPos = creep.pos;
+		const creepPos = creep.pos;
 		let movePos: RoomPosition | undefined = _.find(creepPos.availableNeighbors(),
 													   neighbor => !_.any(excludePos, pos => pos.isEqualTo(neighbor)));
 		if (movePos) {
@@ -401,12 +567,12 @@ export class Movement {
 			creep.blockMovement = true;
 			return creepPos;
 		} else { // Every position is occupied by a creep
-			let availablePositions = _.filter(creepPos.availableNeighbors(true),
-											  neighbor => !_.any(excludePos, pos => pos.isEqualTo(neighbor)));
-			for (let otherPos of availablePositions) {
-				let otherCreep = otherPos.lookFor(LOOK_CREEPS)[0];
+			const availablePositions = _.filter(creepPos.availableNeighbors(true),
+												neighbor => !_.any(excludePos, pos => pos.isEqualTo(neighbor)));
+			for (const otherPos of availablePositions) {
+				const otherCreep = otherPos.lookFor(LOOK_CREEPS)[0];
 				if (!otherCreep) continue;
-				let otherZerg = Overmind.zerg[otherCreep.name];
+				const otherZerg = Overmind.zerg[otherCreep.name];
 				if (!otherZerg) continue;
 				movePos = this.recursivePush(otherZerg, excludePos.concat(creepPos));
 				if (movePos) {
@@ -418,38 +584,44 @@ export class Movement {
 		}
 	}
 
-	/* Travel to a room */
+	/**
+	 * Travel to a room
+	 */
 	static goToRoom(creep: Zerg, roomName: string, options: MoveOptions = {}): number {
 		options.range = 23;
 		return this.goTo(creep, new RoomPosition(25, 25, roomName), options);
 	}
 
-	/* Travel to a room */
+	/**
+	 * Travel to a room
+	 */
 	static goToRoom_swarm(swarm: Swarm, roomName: string, options: SwarmMoveOptions = {}): number {
 		options.range = 24 - Math.max(swarm.width, swarm.height);
 		return this.swarmMove(swarm, new RoomPosition(25, 25, roomName), options);
 	}
 
-	/* Park a creep off-roads */
+	/**
+	 * Park a creep off-roads
+	 */
 	static park(creep: Zerg, pos: RoomPosition = creep.pos, maintainDistance = false): number {
-		let road = creep.pos.lookForStructure(STRUCTURE_ROAD);
+		const road = creep.pos.lookForStructure(STRUCTURE_ROAD);
 		if (!road) return OK;
 
 		// Move out of the bunker if you're in it
-		if (!maintainDistance && creep.colony.bunker && insideBunkerBounds(creep.pos, creep.colony)) {
+		if (!maintainDistance && creep.colony && creep.colony.bunker && insideBunkerBounds(creep.pos, creep.colony)) {
 			return this.goTo(creep, creep.colony.controller.pos);
 		}
 
 		let positions = _.sortBy(creep.pos.availableNeighbors(), p => p.getRangeTo(pos));
 		if (maintainDistance) {
-			let currentRange = creep.pos.getRangeTo(pos);
+			const currentRange = creep.pos.getRangeTo(pos);
 			positions = _.filter(positions, p => p.getRangeTo(pos) <= currentRange);
 		}
 
 		let swampPosition;
-		for (let position of positions) {
+		for (const position of positions) {
 			if (position.lookForStructure(STRUCTURE_ROAD)) continue;
-			let terrain = position.lookFor(LOOK_TERRAIN)[0];
+			const terrain = position.lookFor(LOOK_TERRAIN)[0];
 			if (terrain === 'swamp') {
 				swampPosition = position;
 			} else {
@@ -464,23 +636,30 @@ export class Movement {
 		return this.goTo(creep, pos);
 	}
 
-	/* Moves a creep off of the current tile to the first available neighbor */
+	/**
+	 * Moves a creep off of the current tile to the first available neighbor
+	 */
 	static moveOffCurrentPos(creep: Zerg): number | undefined {
-		let destinationPos = _.first(creep.pos.availableNeighbors());
+		const destinationPos = _.first(creep.pos.availableNeighbors());
 		if (destinationPos) {
-			return this.goTo(creep, destinationPos);
+			const direction = creep.pos.getDirectionTo(destinationPos);
+			return creep.move(direction);
+		} else {
+			log.debug(`${creep.print} can't move off current pos!`);
 		}
 	}
 
-	/* Moves onto an exit tile */
+	/**
+	 * Moves onto an exit tile
+	 */
 	static moveOnExit(creep: Zerg): ScreepsReturnCode | undefined {
 		if (creep.pos.rangeToEdge > 0 && creep.fatigue == 0) {
-			let directions = [1, 3, 5, 7, 2, 4, 6, 8] as DirectionConstant[];
-			for (let direction of directions) {
-				let position = creep.pos.getPositionAtDirection(direction);
-				let terrain = position.lookFor(LOOK_TERRAIN)[0];
+			const directions = [1, 3, 5, 7, 2, 4, 6, 8] as DirectionConstant[];
+			for (const direction of directions) {
+				const position = creep.pos.getPositionAtDirection(direction);
+				const terrain = position.lookFor(LOOK_TERRAIN)[0];
 				if (terrain != 'wall' && position.rangeToEdge == 0) {
-					let outcome = creep.move(direction);
+					const outcome = creep.move(direction);
 					return outcome;
 				}
 			}
@@ -489,14 +668,16 @@ export class Movement {
 		}
 	}
 
-	/* Moves off of an exit tile */
+	/**
+	 * Moves off of an exit tile
+	 */
 	static moveOffExit(creep: Zerg, avoidSwamp = true): ScreepsReturnCode {
 		let swampDirection;
-		let directions = [1, 3, 5, 7, 2, 4, 6, 8] as DirectionConstant[];
-		for (let direction of directions) {
-			let position = creep.pos.getPositionAtDirection(direction);
+		const directions = [1, 3, 5, 7, 2, 4, 6, 8] as DirectionConstant[];
+		for (const direction of directions) {
+			const position = creep.pos.getPositionAtDirection(direction);
 			if (position.rangeToEdge > 0 && position.isWalkable()) {
-				let terrain = position.lookFor(LOOK_TERRAIN)[0];
+				const terrain = position.lookFor(LOOK_TERRAIN)[0];
 				if (avoidSwamp && terrain == 'swamp') {
 					swampDirection = direction;
 					continue;
@@ -510,9 +691,11 @@ export class Movement {
 		return ERR_NO_PATH;
 	}
 
-	/* Moves off of an exit tile toward a given direction */
+	/**
+	 * Moves off of an exit tile toward a given direction
+	 */
 	static moveOffExitToward(creep: Zerg, pos: RoomPosition, detour = true): number | undefined {
-		for (let position of creep.pos.availableNeighbors()) {
+		for (const position of creep.pos.availableNeighbors()) {
 			if (position.getRangeTo(pos) == 1) {
 				return this.goTo(creep, position);
 			}
@@ -522,7 +705,9 @@ export class Movement {
 		}
 	}
 
-	/* Moves a pair of creeps; the follower will always attempt to be in the last position of the leader */
+	/**
+	 * Moves a pair of creeps; the follower will always attempt to be in the last position of the leader
+	 */
 	static pairwiseMove(leader: Zerg, follower: Zerg, target: HasPos | RoomPosition,
 						opts = {} as MoveOptions, allowedRange = 1): number | undefined {
 		let outcome;
@@ -535,7 +720,7 @@ export class Movement {
 			return outcome;
 		}
 
-		let range = leader.pos.getRangeTo(follower);
+		const range = leader.pos.getRangeTo(follower);
 		if (range > allowedRange) {
 			// If leader is farther than max allowed range, allow follower to catch up
 			if (follower.pos.rangeToEdge == 0 && follower.room == leader.room) {
@@ -555,16 +740,20 @@ export class Movement {
 		return outcome;
 	}
 
+	/**
+	 * Moves a swarm to a destination, accounting for group pathfinding
+	 */
 	static swarmMove(swarm: Swarm, destination: HasPos | RoomPosition, options: SwarmMoveOptions = {}): number {
 
 		if (swarm.fatigue > 0) {
 			Movement.circle(swarm.anchor, 'aqua', .3);
+			console.log('tired');
 			return ERR_TIRED;
 		}
 
 		// Set default options
 		_.defaults(options, {
-			range       : 1, //Math.max(swarm.width, swarm.height),
+			range       : 1, // Math.max(swarm.width, swarm.height),
 			ignoreCreeps: true,
 			exitCost    : 10,
 		});
@@ -579,16 +768,17 @@ export class Movement {
 		if (!swarm.memory._go) {
 			swarm.memory._go = {} as MoveData;
 		}
-		let moveData = swarm.memory._go as MoveData;
+		const moveData = swarm.memory._go as MoveData;
 
 		// manage case where creep is nearby destination
-		let rangeToDestination = swarm.minRangeTo(destination);
-		if (options.range != undefined && rangeToDestination <= options.range) {
+		if (options.range != undefined && swarm.minRangeTo(destination) <= options.range &&
+			swarm.maxRangeTo(destination) <= options.range + Math.max(swarm.width, swarm.height)) {
 			delete swarm.memory._go;
+			console.log('no action');
 			return NO_ACTION;
 		}
 
-		let state = this.deserializeState(moveData, destination);
+		const state = this.deserializeState(moveData, destination);
 
 		// check if swarm is stuck
 		let stuck = false;
@@ -629,10 +819,10 @@ export class Movement {
 		if (!moveData.path) {
 			newPath = true;
 			state.destination = destination;
-			let cpu = Game.cpu.getUsed();
+			const cpu = Game.cpu.getUsed();
 			// (!) Pathfinding is done here
-			let ret = Pathing.findSwarmPath(swarm.anchor, destination, swarm.width, swarm.height, options);
-			let cpuUsed = Game.cpu.getUsed() - cpu;
+			const ret = Pathing.findSwarmPath(swarm.anchor, destination, swarm.width, swarm.height, options);
+			const cpuUsed = Game.cpu.getUsed() - cpu;
 			state.cpu = _.round(cpuUsed + state.cpu);
 			if (Game.time % 10 == 0 && state.cpu > REPORT_SWARM_CPU_THRESHOLD) {
 				log.alert(`Movement: heavy cpu use for swarm with ${_.first(swarm.creeps).print}, cpu: ${state.cpu}. ` +
@@ -657,6 +847,7 @@ export class Movement {
 						  destination.roomName];
 
 		if (!moveData.path || moveData.path.length == 0) {
+			console.log(`No path from ${swarm.anchor.print} to ${destination.print}!`);
 			return ERR_NO_PATH;
 		}
 
@@ -664,7 +855,7 @@ export class Movement {
 		if (state.stuckCount == 0 && !newPath) {
 			moveData.path = moveData.path.substr(1);
 		}
-		let nextDirection = parseInt(moveData.path[0], 10) as DirectionConstant;
+		const nextDirection = parseInt(moveData.path[0], 10) as DirectionConstant;
 
 		return swarm.move(nextDirection);
 	}
@@ -695,7 +886,7 @@ export class Movement {
 				for (let dy = -approachThis.range; dy <= approachThis.range; dy++) {
 					x = approachThis.pos.x + dx;
 					y = approachThis.pos.y + dy;
-					let cost = matrix.get(x, y);
+					cost = matrix.get(x, y);
 					if (cost < 0xff) { // is walkable
 						cost = Math.max(cost - options.approachBonus!, 1);
 					}
@@ -708,7 +899,7 @@ export class Movement {
 			Pathing.preferRamparts(matrix, room);
 		}
 		return matrix;
-	};
+	}
 
 
 	static swarmCombatMove(swarm: Swarm, approach: PathFinderGoal[], avoid: PathFinderGoal[],
@@ -722,25 +913,43 @@ export class Movement {
 
 		const debug = false;
 		const callback = (roomName: string) => {
-			if (swarm.roomsByName[roomName]) {
-				let matrix = Pathing.getSwarmDefaultMatrix(swarm.roomsByName[roomName], swarm.width, swarm.height); // already cloned
-				return Movement.combatMoveCallbackModifier(swarm.roomsByName[roomName], matrix, approach, avoid, options);
+			let matrix: CostMatrix;
+			const room = swarm.roomsByName[roomName];
+			if (room) {
+				matrix = Pathing.getSwarmDefaultMatrix(room, swarm.width, swarm.height); // already cloned
+				// Block positions from other swarms in the room
+				const otherCreeps = _.filter(room.creeps, creep => !_.any(swarm.creeps, c => c.name == creep.name));
+				Pathing.blockMyCreeps(matrix, room, otherCreeps);
+				// Pathing.blockHostileCreeps(matrix, creep.room);
+				Movement.combatMoveCallbackModifier(room, matrix, approach, avoid, options);
 			} else {
-				return Pathing.getSwarmTerrainMatrix(roomName, swarm.width, swarm.height);
+				matrix = Pathing.getSwarmTerrainMatrix(roomName, swarm.width, swarm.height);
 			}
+			if (options.displayCostMatrix) {
+				Visualizer.displayCostMatrix(matrix, roomName);
+			}
+			return matrix;
 		};
 
 		let outcome = NO_ACTION;
 
 		// Flee from bad things that that you're too close to
 		if (avoid.length > 0) {
+			const size = Math.max(swarm.width, swarm.height);
 			if (_.any(avoid, goal => swarm.minRangeTo(goal) <= goal.range)) {
-				let allAvoid = _.flatten(_.map(avoid, goal =>
+				const allAvoid = _.flatten(_.map(avoid, goal =>
 					_.map(Pathing.getPosWindow(goal.pos, -swarm.width, -swarm.height), pos => ({
 						pos  : pos,
 						range: goal.range
 					})))) as PathFinderGoal[];
-				let avoidRet = PathFinder.search(swarm.anchor, allAvoid, {
+				if (options.displayAvoid) {
+					const room = swarm.rooms[0];
+					for (const avoid of allAvoid) {
+						const {x, y} = avoid.pos;
+						room.visual.text(avoid.range.toString(), x, y, {color: 'ff0099'});
+					}
+				}
+				const avoidRet = PathFinder.search(swarm.anchor, allAvoid, {
 					roomCallback: callback,
 					flee        : true,
 					maxRooms    : options.allowExit ? 5 : 1,
@@ -760,12 +969,12 @@ export class Movement {
 		// Approach things you want to go to if you're out of range of all the baddies
 		if (approach.length > 0) {
 			if (!_.any(approach, goal => swarm.minRangeTo(goal) <= goal.range)) {
-				let allApproach = _.flatten(_.map(approach, goal =>
+				const allApproach = _.flatten(_.map(approach, goal =>
 					_.map(Pathing.getPosWindow(goal.pos, -swarm.width, -swarm.height), pos => ({
 						pos  : pos,
 						range: goal.range
 					})))) as PathFinderGoal[];
-				let approachRet = PathFinder.search(swarm.anchor, allApproach, {
+				const approachRet = PathFinder.search(swarm.anchor, allApproach, {
 					roomCallback: callback,
 					maxRooms    : 1,
 					plainCost   : 2,
@@ -791,15 +1000,23 @@ export class Movement {
 			avoidPenalty  : 10,
 			approachBonus : 5,
 			preferRamparts: true,
+			requireRamparts: false,
 		});
 
 		const debug = false;
 		const callback = (roomName: string) => {
 			if (roomName == creep.room.name) {
-				let matrix = Pathing.getCreepMatrix(creep.room).clone();
-				return Movement.combatMoveCallbackModifier(creep.room, matrix, approach, avoid, options);
+				const matrix = Pathing.getDefaultMatrix(creep.room).clone();
+				Pathing.blockMyCreeps(matrix, creep.room);
+				Pathing.blockHostileCreeps(matrix, creep.room);
+				if (options.requireRamparts) { Pathing.blockNonRamparts(matrix, creep.room); }
+				Movement.combatMoveCallbackModifier(creep.room, matrix, approach, avoid, options);
+				if (options.displayCostMatrix) {
+					Visualizer.displayCostMatrix(matrix, roomName);
+				}
+				return matrix;
 			} else {
-				return !(Memory.rooms[roomName] && Memory.rooms[roomName].avoid);
+				return !(Memory.rooms[roomName] && Memory.rooms[roomName][_RM.AVOID]);
 			}
 		};
 
@@ -809,7 +1026,7 @@ export class Movement {
 		if (avoid.length > 0) {
 			if (_.any(avoid, goal => creep.pos.inRangeToXY(goal.pos.x, goal.pos.y, goal.range))
 				&& !creep.inRampart) {
-				let avoidRet = PathFinder.search(creep.pos, avoid, {
+				const avoidRet = PathFinder.search(creep.pos, avoid, {
 					roomCallback: callback,
 					flee        : true,
 					maxRooms    : options.allowExit ? 5 : 1,
@@ -829,7 +1046,7 @@ export class Movement {
 		// Approach things you want to go to if you're out of range of all the baddies
 		if (approach.length > 0) {
 			if (!_.any(approach, goal => creep.pos.inRangeToXY(goal.pos.x, goal.pos.y, goal.range))) {
-				let approachRet = PathFinder.search(creep.pos, approach, {
+				const approachRet = PathFinder.search(creep.pos, approach, {
 					roomCallback: callback,
 					maxRooms    : 1,
 					plainCost   : 2,
@@ -846,13 +1063,13 @@ export class Movement {
 		}
 
 		// Try to maneuver under ramparts if possible
-		if (options.preferRamparts && !creep.inRampart && approach.length > 0) {
-			let openRamparts = _.filter(creep.room.walkableRamparts,
-										rampart => _.any(approach,
-														 g => rampart.pos.inRangeToXY(g.pos.x, g.pos.y, g.range))
-												   && rampart.pos.isWalkable());
+		if ((options.preferRamparts || options.requireRamparts) && !creep.inRampart && approach.length > 0) {
+			const openRamparts = _.filter(creep.room.walkableRamparts,
+										  rampart => _.any(approach,
+														   g => rampart.pos.inRangeToXY(g.pos.x, g.pos.y, g.range))
+													 && rampart.pos.isWalkable());
 			if (openRamparts.length > 0) {
-				let ret = PathFinder.search(creep.pos, _.map(openRamparts, r => ({pos: r.pos, range: 0})), {
+				const ret = PathFinder.search(creep.pos, _.map(openRamparts, r => ({pos: r.pos, range: 0})), {
 					roomCallback: callback,
 					maxRooms    : 1,
 					plainCost   : 2,
@@ -875,25 +1092,27 @@ export class Movement {
 	private static invasionMoveCallbackModifier(room: Room, matrix: CostMatrix): CostMatrix {
 		// This is only applied once creep is in the target room
 		Pathing.blockExits(matrix);
-		for (let hostile of room.invaders) {
+		for (const hostile of room.invaders) {
 			if (hostile.getActiveBodyparts(RANGED_ATTACK) > 1) {
 				Pathing.setCostsInRange(matrix, hostile, 3, 1, true);
 			} else if (hostile.getActiveBodyparts(ATTACK) > 1) {
 				Pathing.setCostsInRange(matrix, hostile, 1, 1, true);
 			}
 		}
-		for (let keeper of room.sourceKeepers) {
+		for (const keeper of room.sourceKeepers) {
 			Pathing.setCostsInRange(matrix, keeper, 3, 10, true);
 		}
-		for (let lair of room.keeperLairs) {
+		for (const lair of room.keeperLairs) {
 			if ((lair.ticksToSpawn || Infinity) < 25) {
 				Pathing.setCostsInRange(matrix, lair, 5, 5, true);
 			}
 		}
 		return matrix;
-	};
+	}
 
-	// Moving routine for guards or sourceReapers in a room with NPC invaders
+	/**
+	 * Moving routine for guards or sourceReapers in a room with NPC invaders
+	 */
 	static invasionMove(creep: Zerg, destination: RoomPosition | HasPos, options: MoveOptions = {}): number {
 		_.defaults(options, {
 			ignoreRoads: true
@@ -910,19 +1129,23 @@ export class Movement {
 		return creep.goTo(dest, options);
 	}
 
-	/* Kite around enemies in a single room, repathing every tick. More expensive than flee(). */
+	/**
+	 * Kite around enemies in a single room, repathing every tick. More expensive than flee().
+	 */
 	static kite(creep: Zerg, avoidGoals: (RoomPosition | HasPos)[], options: MoveOptions = {}): number | undefined {
 		_.defaults(options, {
 			fleeRange   : 5,
 			terrainCosts: getTerrainCosts(creep.creep),
 		});
-		let nextPos = _.first(Pathing.findKitingPath(creep.pos, avoidGoals, options).path);
+		const nextPos = _.first(Pathing.findKitingPath(creep.pos, avoidGoals, options).path);
 		if (nextPos) {
 			return creep.move(creep.pos.getDirectionTo(nextPos));
 		}
 	}
 
-	/* Flee from avoid goals in the room while not re-pathing every tick like kite() does. Returns  */
+	/**
+	 * Flee from avoid goals in the room while not re-pathing every tick like kite() does.
+	 */
 	static flee(creep: Zerg, avoidGoals: (RoomPosition | HasPos)[],
 				dropEnergy = false, options: MoveOptions = {}): number | undefined {
 
@@ -934,8 +1157,8 @@ export class Movement {
 		});
 		if (options.fleeRange == undefined) options.fleeRange = options.terrainCosts!.plainCost > 1 ? 8 : 16;
 
-		let closest = creep.pos.findClosestByRange(avoidGoals);
-		let rangeToClosest = closest ? creep.pos.getRangeTo(closest) : 50;
+		const closest = creep.pos.findClosestByRange(avoidGoals);
+		const rangeToClosest = closest ? creep.pos.getRangeTo(closest) : 50;
 
 		if (rangeToClosest > options.fleeRange) { // Out of range of baddies
 
@@ -948,7 +1171,7 @@ export class Movement {
 			}
 
 			// wait until safe
-			let moveData = creep.memory._go as MoveData;
+			const moveData = creep.memory._go as MoveData;
 			if (moveData.fleeWait != undefined) {
 				if (moveData.fleeWait <= 0) {
 					// you're safe now
@@ -969,19 +1192,20 @@ export class Movement {
 			if (!creep.memory._go) {
 				creep.memory._go = {} as MoveData;
 			}
-			let moveData = creep.memory._go as MoveData;
+			const moveData = creep.memory._go as MoveData;
 
 			moveData.fleeWait = 2;
 
 			// Invalidate path if needed
 			if (moveData.path) {
 				if (moveData.path.length > 0) {
-					let nextDirection = parseInt(moveData.path[0], 10) as DirectionConstant;
-					let pos = creep.pos.getPositionAtDirection(nextDirection);
+					const nextDirection = parseInt(moveData.path[0], 10) as DirectionConstant;
+					const pos = creep.pos.getPositionAtDirection(nextDirection);
 					if (!pos.isEdge) {
-						let newClosest = pos.findClosestByRange(avoidGoals);
-						if (newClosest && normalizePos(newClosest).getRangeTo(pos) < rangeToClosest)
+						const newClosest = pos.findClosestByRange(avoidGoals);
+						if (newClosest && normalizePos(newClosest).getRangeTo(pos) < rangeToClosest) {
 							delete moveData.path;
+						}
 					}
 				} else {
 					delete moveData.path;
@@ -990,7 +1214,7 @@ export class Movement {
 
 			// Re-calculate path if needed
 			if (!moveData.path || !moveData.destination) {
-				let ret = Pathing.findFleePath(creep.pos, avoidGoals, options);
+				const ret = Pathing.findFleePath(creep.pos, avoidGoals, options);
 				if (ret.path.length == 0) {
 					return NO_ACTION;
 				}
@@ -1005,13 +1229,16 @@ export class Movement {
 
 
 	private static deserializeState(moveData: MoveData, destination: RoomPosition): MoveState {
-		let state = {} as MoveState;
+		const state = {} as MoveState;
 		if (moveData.state) {
 			state.lastCoord = {x: moveData.state[STATE_PREV_X], y: moveData.state[STATE_PREV_Y]};
 			state.cpu = moveData.state[STATE_CPU];
 			state.stuckCount = moveData.state[STATE_STUCK];
 			state.destination = new RoomPosition(moveData.state[STATE_DEST_X], moveData.state[STATE_DEST_Y],
 												 moveData.state[STATE_DEST_ROOMNAME]);
+			if (moveData.state[STATE_CURRENT_X] && moveData.state[STATE_CURRENT_Y]) {
+				state.currentXY = {x: moveData.state[STATE_CURRENT_X], y: moveData.state[STATE_CURRENT_Y]};
+			}
 		} else {
 			state.cpu = 0;
 			state.destination = destination;
@@ -1019,9 +1246,33 @@ export class Movement {
 		return state;
 	}
 
-	private static serializeState(creep: Zerg, destination: RoomPosition, state: MoveState, moveData: MoveData) {
-		moveData.state = [creep.pos.x, creep.pos.y, state.stuckCount, state.cpu, destination.x, destination.y,
-						  destination.roomName];
+	private static serializeState(creep: Zerg, destination: RoomPosition, state: MoveState, moveData: MoveData,
+								  nextCoord?: Coord | RoomPosition | undefined) {
+		if (nextCoord) {
+			moveData.state = [creep.pos.x, creep.pos.y, state.stuckCount, state.cpu, destination.x, destination.y,
+							  destination.roomName, nextCoord.x, nextCoord.y];
+		} else {
+			moveData.state = [creep.pos.x, creep.pos.y, state.stuckCount, state.cpu, destination.x, destination.y,
+							  destination.roomName];
+		}
+	}
+
+	/**
+	 * Update the currentXY property for a move state
+	 */
+	private static updateStateNextCoord(moveData: MoveData, nextCoord: Coord | RoomPosition) {
+		if (moveData.state) {
+			if (moveData.state[STATE_CURRENT_X] != undefined && moveData.state[STATE_CURRENT_Y] != undefined) {
+				moveData.state[STATE_CURRENT_X] = nextCoord.x;
+				moveData.state[STATE_CURRENT_Y] = nextCoord.y;
+			} else if (moveData.state.length == STATE_CURRENT_X) {
+				moveData.state.push(nextCoord.x);
+				moveData.state.push(nextCoord.y);
+			} else {
+				// Shouldn't ever reach here
+				log.warning(`Invalid moveData.state length!`);
+			}
+		}
 	}
 
 	private static isStuck(creep: Zerg, state: MoveState): boolean {
@@ -1036,7 +1287,9 @@ export class Movement {
 		return stuck;
 	}
 
-	/* Draw a circle */
+	/**
+	 * Draw a circle
+	 */
 	private static circle(pos: RoomPosition, color: string, opacity?: number): RoomVisual {
 		return new RoomVisual(pos.roomName).circle(pos, {
 			radius: .45, fill: 'transparent', stroke: color, strokeWidth: .15, opacity: opacity

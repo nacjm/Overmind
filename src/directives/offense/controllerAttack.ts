@@ -1,9 +1,12 @@
-import {Directive} from '../Directive';
-import {profile} from '../../profiler/decorator';
-import {StationaryScoutOverlord} from '../../overlords/scouting/stationary';
-import {ControllerAttackerOverlord} from '../../overlords/offense/controllerAttacker';
 import {log} from '../../console/log';
+import {ControllerAttackerOverlord} from '../../overlords/offense/controllerAttacker';
+import {StationaryScoutOverlord} from '../../overlords/scouting/stationary';
+import {profile} from '../../profiler/decorator';
+import {Directive} from '../Directive';
 
+/**
+ * Attack a controller, downgrading it to level 0
+ */
 @profile
 export class DirectiveControllerAttack extends Directive {
 
@@ -21,7 +24,7 @@ export class DirectiveControllerAttack extends Directive {
 	}
 
 	init(): void {
-		let level: string = this.room && this.room.controller ? this.room.controller.level.toString() : '???';
+		const level: string = this.room && this.room.controller ? this.room.controller.level.toString() : '???';
 		this.alert(`Downgrading controller (RCL${level})`);
 	}
 

@@ -1,8 +1,11 @@
-import {Directive} from '../Directive';
 import {profile} from '../../profiler/decorator';
-import {Visualizer} from '../../visuals/Visualizer';
 import {bunkerLayout} from '../../roomPlanner/layouts/bunker';
+import {Visualizer} from '../../visuals/Visualizer';
+import {Directive} from '../Directive';
 
+/**
+ * Manually place a bunker anchored at the target location for the RoomPlanner to use in semiautomatic or manual mode
+ */
 @profile
 export class DirectiveRPBunker extends Directive {
 
@@ -25,7 +28,7 @@ export class DirectiveRPBunker extends Directive {
 	run(): void {
 
 	}
-	
+
 	visuals(): void {
 		Visualizer.drawLayout(bunkerLayout, this.pos);
 	}

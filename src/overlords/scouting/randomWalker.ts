@@ -1,13 +1,16 @@
-import {Overlord} from '../Overlord';
-import {Zerg} from '../../zerg/Zerg';
+import {Colony} from '../../Colony';
+import {Roles, Setups} from '../../creepSetups/setups';
 import {OverlordPriority} from '../../priorities/priorities_overlords';
 import {profile} from '../../profiler/decorator';
-import {Colony} from '../../Colony';
 import {Tasks} from '../../tasks/Tasks';
-import {Roles, Setups} from '../../creepSetups/setups';
+import {Zerg} from '../../zerg/Zerg';
+import {Overlord} from '../Overlord';
 
 const DEFAULT_NUM_SCOUTS = 3;
 
+/**
+ * Sends out scouts which randomly traverse rooms to uncover possible expansion locations and gather intel
+ */
 @profile
 export class RandomWalkerScoutOverlord extends Overlord {
 
@@ -24,18 +27,19 @@ export class RandomWalkerScoutOverlord extends Overlord {
 
 	private handleScout(scout: Zerg) {
 		// Stomp on enemy construction sites
-		let enemyConstructionSites = scout.room.find(FIND_HOSTILE_CONSTRUCTION_SITES);
-		if (enemyConstructionSites.length > 0) {
+		const enemyConstructionSites = scout.room.find(FIND_HOSTILE_CONSTRUCTION_SITES);
+		if (enemyConstructionSites.length > 0 && enemyConstructionSites[0].pos.isWalkable(true)) {
 			scout.goTo(enemyConstructionSites[0].pos);
+			return;
 		}
 		// Check if room might be connected to newbie/respawn zone
-		let indestructibleWalls = _.filter(scout.room.walls, wall => wall.hits == undefined);
+		const indestructibleWalls = _.filter(scout.room.walls, wall => wall.hits == undefined);
 		if (indestructibleWalls.length > 0) { // go back to origin colony if you find a room near newbie zone
-			scout.task = Tasks.goToRoom(scout.colony.room.name); // todo: make this more precise
+			scout.task = Tasks.goToRoom(this.colony.room.name); // todo: make this more precise
 		} else {
 			// Pick a new room
-			let neighboringRooms = _.values(Game.map.describeExits(scout.pos.roomName)) as string[];
-			let roomName = _.sample(neighboringRooms);
+			const neighboringRooms = _.values(Game.map.describeExits(scout.pos.roomName)) as string[];
+			const roomName = _.sample(neighboringRooms);
 			if (Game.map.isRoomAvailable(roomName)) {
 				scout.task = Tasks.goToRoom(roomName);
 			}

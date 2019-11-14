@@ -1,12 +1,12 @@
-// Hatchery overlord: spawn and run a dedicated supplier-like hatchery attendant (called after colony has storage)
-import {DEFAULT_PRESPAWN, Overlord} from '../Overlord';
+import {CreepSetup} from '../../creepSetups/CreepSetup';
+import {Roles, Setups} from '../../creepSetups/setups';
+import {TERMINAL_STATE_REBUILD} from '../../directives/terminalState/terminalState_rebuild';
 import {Hatchery} from '../../hiveClusters/hatchery';
-import {Zerg} from '../../zerg/Zerg';
-import {Tasks} from '../../tasks/Tasks';
 import {OverlordPriority} from '../../priorities/priorities_overlords';
 import {profile} from '../../profiler/decorator';
-import {Roles, Setups} from '../../creepSetups/setups';
-import {CreepSetup} from '../../creepSetups/CreepSetup';
+import {Tasks} from '../../tasks/Tasks';
+import {Zerg} from '../../zerg/Zerg';
+import {DEFAULT_PRESPAWN, Overlord} from '../Overlord';
 
 type rechargeObjectType = StructureStorage
 	| StructureTerminal
@@ -15,6 +15,9 @@ type rechargeObjectType = StructureStorage
 	| Tombstone
 	| Resource;
 
+/**
+ * Spawns a dedicated hatchery attendant to refill spawns and extensions
+ */
 @profile
 export class QueenOverlord extends Overlord {
 
@@ -26,7 +29,10 @@ export class QueenOverlord extends Overlord {
 	constructor(hatchery: Hatchery, priority = OverlordPriority.core.queen) {
 		super(hatchery, 'supply', priority);
 		this.hatchery = hatchery;
-		this.queenSetup = this.hatchery.battery || this.colony.storage ? Setups.queens.default : Setups.queens.early;
+		this.queenSetup = this.colony.storage ? Setups.queens.default : Setups.queens.early;
+		if (this.colony.terminalState == TERMINAL_STATE_REBUILD) {
+			this.queenSetup = Setups.queens.early;
+		}
 		this.queens = this.zerg(Roles.queen);
 		this.settings = {
 			refillTowersBelow: 500,
@@ -41,7 +47,7 @@ export class QueenOverlord extends Overlord {
 
 	private supplyActions(queen: Zerg) {
 		// Select the closest supply target out of the highest priority and refill it
-		let request = this.hatchery.transportRequests.getPrioritizedClosestRequest(queen.pos, 'supply');
+		const request = this.hatchery.transportRequests.getPrioritizedClosestRequest(queen.pos, 'supply');
 		if (request) {
 			queen.task = Tasks.transfer(request.target);
 		} else {
@@ -110,7 +116,7 @@ export class QueenOverlord extends Overlord {
 	}
 
 	run() {
-		for (let queen of this.queens) {
+		for (const queen of this.queens) {
 			// Get a task
 			this.handleQueen(queen);
 			// Run the task if you have one; else move back to idle pos

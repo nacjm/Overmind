@@ -1,32 +1,34 @@
 // Jump table to instantiate flags based on type
 
-import {DirectiveGuard} from './defense/guard';
+import {DirectiveClearRoom} from './colony/clearRoom';
+import {DirectiveColonize} from './colony/colonize';
 import {DirectiveIncubate} from './colony/incubate';
 import {DirectiveOutpost} from './colony/outpost';
-import {DirectiveBootstrap} from './situational/bootstrap';
-import {Directive} from './Directive';
-import {DirectiveRPHatchery} from './roomPlanner/roomPlanner_hatchery';
-import {DirectiveRPCommandCenter} from './roomPlanner/roomPlanner_commandCenter';
-import {DirectiveColonize} from './colony/colonize';
-import {DirectiveTargetSiege} from './targeting/siegeTarget';
-import {DirectiveSiege} from './offense/siege';
-import {DirectiveHealPoint} from './offense/healPoint';
-import {DirectiveDestroy} from './offense/destroy';
-import {DirectiveInvasionDefense} from './defense/invasionDefense';
-import {DirectiveHaul} from './resource/haul';
-import {DirectiveDismantle} from './targeting/dismantle';
-import {DirectiveNukeResponse} from './situational/nukeResponse';
-import {DirectiveTerminalEmergencyState} from './terminalState/terminalState_emergency';
-import {DirectiveRPBunker} from './roomPlanner/roomPlanner_bunker';
-import {DirectiveTerminalRebuildState} from './terminalState/terminalState_rebuild';
-import {DirectiveTerminalEvacuateState} from './terminalState/terminalState_evacuate';
-import {DirectiveControllerAttack} from './offense/controllerAttack';
 import {DirectiveSKOutpost} from './colony/outpostSK';
-import {DirectiveHarvest} from './resource/harvest';
-import {DirectiveExtract} from './resource/extract';
-import {DirectiveSwarmDestroy} from './offense/swarmDestroy';
+import {DirectiveGuard} from './defense/guard';
+import {DirectiveInvasionDefense} from './defense/invasionDefense';
 import {DirectiveOutpostDefense} from './defense/outpostDefense';
+import {Directive} from './Directive';
+import {DirectiveControllerAttack} from './offense/controllerAttack';
+import {DirectivePairDestroy} from './offense/pairDestroy';
+import {DirectiveSwarmDestroy} from './offense/swarmDestroy';
+import {DirectiveExtract} from './resource/extract';
+import {DirectiveHarvest} from './resource/harvest';
+import {DirectiveHaul} from './resource/haul';
+import {DirectiveRPBunker} from './roomPlanner/roomPlanner_bunker';
+import {DirectiveRPCommandCenter} from './roomPlanner/roomPlanner_commandCenter';
+import {DirectiveRPHatchery} from './roomPlanner/roomPlanner_hatchery';
+import {DirectiveBootstrap} from './situational/bootstrap';
+import {DirectiveNukeResponse} from './situational/nukeResponse';
+import {DirectiveDismantle} from './targeting/dismantle';
+import {DirectiveTargetSiege} from './targeting/siegeTarget';
+import {DirectiveTerminalEmergencyState} from './terminalState/terminalState_emergency';
+import {DirectiveTerminalEvacuateState} from './terminalState/terminalState_evacuate';
+import {DirectiveTerminalRebuildState} from './terminalState/terminalState_rebuild';
 
+/**
+ * This is the initializer for directives, which maps flags by their color code to the corresponding directive
+ */
 export function DirectiveWrapper(flag: Flag): Directive | undefined {
 
 	switch (flag.color) {
@@ -42,6 +44,8 @@ export function DirectiveWrapper(flag: Flag): Directive | undefined {
 					return new DirectiveIncubate(flag);
 				case COLOR_GREY:
 					return new DirectiveColonize(flag);
+				case COLOR_ORANGE:
+					return new DirectiveClearRoom(flag);
 			}
 			break;
 
@@ -50,14 +54,10 @@ export function DirectiveWrapper(flag: Flag): Directive | undefined {
 			switch (flag.secondaryColor) {
 				case COLOR_RED:
 					return new DirectiveSwarmDestroy(flag);
+				case COLOR_CYAN:
+					return new DirectivePairDestroy(flag);
 				case COLOR_PURPLE:
 					return new DirectiveControllerAttack(flag);
-				case COLOR_ORANGE:
-					return new DirectiveSiege(flag);
-				case COLOR_GREEN:
-					return new DirectiveHealPoint(flag);
-				case COLOR_CYAN:
-					return new DirectiveDestroy(flag);
 			}
 			break;
 
